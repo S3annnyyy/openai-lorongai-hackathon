@@ -37,7 +37,8 @@ export const fallbackData: DashboardState = {
       "flowchart LR\\niac[\\\"IaC Source\\\"] --> deploy[\\\"Provisioning / Deploy\\\"]\\ndeploy --> compute[\\\"Compute\\\"]\\n",
     er: "erDiagram\\n    NO_SCHEMA {\\n      string note\\n    }\\n",
     call_graph: "flowchart LR\\nentry --> service\\n",
-    dependencies: "flowchart LR\\nentry --> service\\n"
+    dependencies: "flowchart LR\\nentry --> service\\n",
+    terraform_drawio: ""
   },
   onboarding: {
     start_here: ["entry", "service"],

@@ -55,6 +55,14 @@ main {
   pointer-events: none;
 }
 
+.dashboard-repo-selection {
+  display: flex;
+  align-items: center;  
+  justify-content: left; 
+  gap: 16px;             
+  flex-wrap: wrap;      
+}
+
 .dashboard-title {
   margin: 0;
   font-size: 2.25rem;
@@ -115,6 +123,7 @@ main {
   border-radius: 16px;
   padding: 16px;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+  margin-top: 0.5rem;
 }
 
 .panel h2,
@@ -420,6 +429,48 @@ main {
   font-size: 0.8rem;
 }
 
+.drawio-shell {
+  min-height: 560px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  overflow: auto;
+}
+
+.drawio-shell.compact {
+  min-height: 320px;
+  height: 320px;
+}
+
+.drawio-svg {
+  width: 100%;
+  min-width: 880px;
+  height: auto;
+  display: block;
+}
+
+.drawio-node-label {
+  fill: #0f172a;
+  font-size: 13px;
+  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.drawio-edge-label {
+  fill: #475569;
+  font-size: 11px;
+  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.drawio-error {
+  margin: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #9a3412;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
 .side-list {
   margin: 0;
   padding-left: 20px;
@@ -535,7 +586,8 @@ main {
   }
 
   .graph-shell,
-  .mermaid-shell {
+  .mermaid-shell,
+  .drawio-shell {
     min-height: 420px;
     height: 420px;
   }

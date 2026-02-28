@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import DrawioCard from "../components/DrawioCard";
 import ForceGraphPanel from "../components/ForceGraphPanel";
 import MermaidCard from "../components/MermaidCard";
 import { fallbackData } from "../lib/fallback-data";
@@ -181,26 +182,28 @@ export default function Page() {
     <main>
       <section className="dashboard-header">
         <h1 className="dashboard-title">Code Autopsy X-Ray Dashboard</h1>
-        <p className="dashboard-subtitle">
-          Visualizing outputs from <code>code-autopsy/.autopsy-outputs/&lt;repo&gt;</code>.
-        </p>
-        <div className="graph-controls">
-          <select
-            className="control-select"
-            value={selectedRepo}
-            onChange={(event) => setSelectedRepo(event.target.value)}
-            disabled={repos.length === 0}
-          >
-            {repos.length === 0 ? (
-              <option value="">No repos found</option>
-            ) : (
-              repos.map((repo) => (
-                <option key={repo} value={repo}>
-                  {repo}
-                </option>
-              ))
-            )}
-          </select>
+        <div className="dashboard-repo-selection">
+          <p className="dashboard-subtitle">
+          Visualizing outputs from <code>code-autopsy/.autopsy-outputs/</code>
+          </p>
+          <div className="graph-controls">
+            <select
+              className="control-select"
+              value={selectedRepo}
+              onChange={(event) => setSelectedRepo(event.target.value)}
+              disabled={repos.length === 0}
+            >
+              {repos.length === 0 ? (
+                <option value="">No repos found</option>
+              ) : (
+                repos.map((repo) => (
+                  <option key={repo} value={repo}>
+                    {repo}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
         </div>
         <div className="kpi-grid">
           <div className="kpi">
@@ -342,6 +345,10 @@ export default function Page() {
               />
             ))}
           </div>
+
+          {data.diagrams.terraform_drawio ? (
+            <DrawioCard title="Terraform IaC (draw.io)" xml={data.diagrams.terraform_drawio} />
+          ) : null}
 
           <div className="panel">
             <h3>Start Here</h3>
