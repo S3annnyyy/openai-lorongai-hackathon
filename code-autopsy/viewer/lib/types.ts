@@ -132,6 +132,7 @@ export type DashboardState = {
     er: string;
     call_graph: string;
     dependencies: string;
+    terraform_drawio?: string;
   };
   onboarding: {
     start_here: string[];

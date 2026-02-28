@@ -507,7 +507,7 @@ def _launch_viewer(repo_name: str, port: int, open_browser: bool, output_base: P
     print(start_message)
 
     if open_browser:
-        viewer_url = f"http://localhost:{port}/?repo={quote(repo_name)}"
+        viewer_url = f"http://localhost:{port}/?repo={quote(repo_name)}&tab=architecture_services"
         webbrowser.open(viewer_url)
         print(f"Viewer URL: {viewer_url}")
 

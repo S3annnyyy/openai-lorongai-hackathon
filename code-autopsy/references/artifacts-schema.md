@@ -32,6 +32,8 @@ Required files:
 
 Optional files:
 - `images/*.png` (when `--export-images` succeeds)
+- `terraform-architecture.drawio` (generated when Terraform `.tf` files are detected)
+- `artifacts/terraform.json` (Terraform node/edge model used for draw.io output)
 
 ## dashboard_state.json
 
