@@ -105,40 +105,112 @@ function safeDate(value: string | undefined): string {
   return new Date(parsed).toLocaleString();
 }
 
-function sectionTextBlock(value: string, maxLines = 10): string {
-  const lines = value.replace(/\r\n/g, "\n").split("\n").map((line) => line.trimEnd());
-  if (lines.length <= maxLines) return lines.join("\n");
-  return `${lines.slice(0, maxLines).join("\n")}\n...`;
-}
-
 function cleanMarkdownLine(line: string): string {
-  return line
+  const withSeverityEmoji = line.replace(
+    /\[(CRITICAL|HIGH|MEDIUM|SMALL|LOW)\]/gi,
+    (_match, level: string) => {
+      const normalized = level.toUpperCase();
+      if (normalized === "CRITICAL") return "🚨";
+      if (normalized === "HIGH") return "🔴";
+      if (normalized === "MEDIUM") return "🟠";
+      if (normalized === "SMALL") return "🟣";
+      return "🔵";
+    }
+  );
+
+  return withSeverityEmoji
     .replace(/^#{1,6}\s+/, "")
     .replace(/^\s*[-*]\s+/, "")
     .replace(/^\s*\d+\.\s+/, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*/g, "")
     .trim();
 }
 
+function isSeverityLabelRow(text: string): boolean {
+  return /^(?:(?:🚨|🔴|🟠|🟣|🔵)\s+|(?:CRITICAL|HIGH|MEDIUM|SMALL|LOW)\b)/i.test(text);
+}
+
 function renderAgentReport(report: string): JSX.Element {
-  const cleaned = sectionTextBlock(report, 14)
+  const cleaned = report
+    .replace(/\r\n/g, "\n")
     .replace(/```[a-zA-Z0-9_-]*/g, "")
     .replace(/```/g, "");
-  const lines = cleaned
-    .split("\n")
-    .map((line) => cleanMarkdownLine(line))
-    .filter((line) => line.length > 0);
+  const rawLines = cleaned.split("\n");
+  const blocks: JSX.Element[] = [];
+  let listBuffer: Array<{ text: string; noBullet: boolean }> = [];
+  let paragraphBuffer: string[] = [];
 
-  if (lines.length === 0) {
+  const flushList = () => {
+    if (listBuffer.length === 0) return;
+    const items = [...listBuffer];
+    listBuffer = [];
+    blocks.push(
+      <ul className="agent-report-list" key={`list-${blocks.length}`}>
+        {items.map((item, index) => (
+          <li
+            key={`${blocks.length}-${index}`}
+            className={item.noBullet ? "agent-report-list-item no-bullet" : "agent-report-list-item"}
+          >
+            {item.text}
+          </li>
+        ))}
+      </ul>
+    );
+  };
+
+  const flushParagraph = () => {
+    if (paragraphBuffer.length === 0) return;
+    const text = paragraphBuffer.join(" ").trim();
+    paragraphBuffer = [];
+    if (!text) return;
+    blocks.push(
+      <p className="agent-report-paragraph" key={`p-${blocks.length}`}>
+        {text}
+      </p>
+    );
+  };
+
+  for (const rawLine of rawLines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushList();
+      flushParagraph();
+      continue;
+    }
+
+    if (/^#{1,6}\s+/.test(line)) {
+      flushList();
+      flushParagraph();
+      blocks.push(
+        <h6 className="agent-report-heading" key={`h-${blocks.length}`}>
+          {cleanMarkdownLine(line)}
+        </h6>
+      );
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(line) || /^\d+\.\s+/.test(line)) {
+      flushParagraph();
+      const cleaned = cleanMarkdownLine(line);
+      listBuffer.push({ text: cleaned, noBullet: isSeverityLabelRow(cleaned) });
+      continue;
+    }
+
+    flushList();
+    paragraphBuffer.push(cleanMarkdownLine(line));
+  }
+
+  flushList();
+  flushParagraph();
+
+  if (blocks.length === 0) {
     return <p className="muted">No report generated for this iteration.</p>;
   }
 
-  return (
-    <ul className="agent-report-list">
-      {lines.map((line) => (
-        <li key={line}>{line}</li>
-      ))}
-    </ul>
-  );
+  return <div className="agent-report-content">{blocks}</div>;
+}
+
 function nodeModulePath(node: GraphNode): string | null {
   if (node.type !== "module") return null;
   if (node.id.startsWith("file:")) return node.id.slice(5);
@@ -151,6 +223,269 @@ function groupNodeIdForLevel(path: string, level: "service" | "package" | "file"
   const depth = level === "service" ? 1 : 2;
   const parts = path.split("/").filter(Boolean);
   return `group:${parts.slice(0, Math.min(parts.length, depth)).join("/")}`;
+}
+
+function wrapPdfText(line: string, maxChars: number): string[] {
+  if (!line) return [""];
+  if (line.length <= maxChars) return [line];
+
+  const result: string[] = [];
+  const words = line.split(/\s+/);
+  let current = "";
+  for (const word of words) {
+    if (!word) continue;
+    if (!current) {
+      if (word.length <= maxChars) {
+        current = word;
+      } else {
+        for (let index = 0; index < word.length; index += maxChars) {
+          result.push(word.slice(index, index + maxChars));
+        }
+      }
+      continue;
+    }
+
+    const next = `${current} ${word}`;
+    if (next.length <= maxChars) {
+      current = next;
+      continue;
+    }
+
+    result.push(current);
+    if (word.length <= maxChars) {
+      current = word;
+    } else {
+      current = "";
+      for (let index = 0; index < word.length; index += maxChars) {
+        result.push(word.slice(index, index + maxChars));
+      }
+    }
+  }
+  if (current) result.push(current);
+  return result.length > 0 ? result : [""];
+}
+
+function escapePdfText(text: string): string {
+  const ascii = text.replace(/[^\x20-\x7E]/g, " ");
+  return ascii.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+type PdfLineStyle = "title" | "section" | "subsection" | "agent" | "meta" | "bullet" | "body" | "spacer";
+
+function classifyPdfLine(rawLine: string): { style: PdfLineStyle; text: string } {
+  const line = rawLine.trimEnd();
+  const trimmed = line.trim();
+  if (!trimmed) return { style: "spacer", text: "" };
+  if (trimmed.startsWith("# ")) return { style: "title", text: trimmed.slice(2).trim() };
+  if (trimmed.startsWith("## ")) return { style: "section", text: trimmed.slice(3).trim() };
+  if (trimmed.startsWith("### ")) return { style: "subsection", text: trimmed.slice(4).trim() };
+  if (trimmed.startsWith("#### ")) return { style: "agent", text: trimmed.slice(5).trim() };
+  if (trimmed.startsWith("- ")) return { style: "bullet", text: trimmed.slice(2).trim() };
+  if (
+    /^(Generated|Run|Status|Pace|Planned Features|Report Path|Manifest Path|Note|Goal|Timestamp|Notes|Changed files)\s*:/.test(
+      trimmed
+    )
+  ) {
+    return { style: "meta", text: trimmed };
+  }
+  return { style: "body", text: trimmed };
+}
+
+function buildPdfDocumentFromText(rawText: string): Uint8Array {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const margin = 40;
+  const usableWidth = pageWidth - margin * 2;
+  const styleMap: Record<
+    PdfLineStyle,
+    {
+      fontSize: number;
+      indent: number;
+      before: number;
+      after: number;
+      color: [number, number, number];
+      drawRuleAfter?: boolean;
+      prefix?: string;
+    }
+  > = {
+    title: { fontSize: 19, indent: 0, before: 0, after: 8, color: [0.07, 0.2, 0.45], drawRuleAfter: true },
+    section: { fontSize: 14, indent: 0, before: 10, after: 4, color: [0.1, 0.24, 0.52], drawRuleAfter: true },
+    subsection: { fontSize: 12, indent: 0, before: 8, after: 2, color: [0.1, 0.16, 0.28] },
+    agent: { fontSize: 11, indent: 0, before: 8, after: 2, color: [0.12, 0.19, 0.34] },
+    meta: { fontSize: 10, indent: 0, before: 2, after: 0, color: [0.09, 0.13, 0.21] },
+    bullet: { fontSize: 10, indent: 10, before: 1, after: 0, color: [0.09, 0.13, 0.21], prefix: "- " },
+    body: { fontSize: 10, indent: 0, before: 1, after: 0, color: [0.09, 0.13, 0.21] },
+    spacer: { fontSize: 10, indent: 0, before: 6, after: 0, color: [0.09, 0.13, 0.21] },
+  };
+
+  const pageCommands: string[] = [""];
+  let currentPage = 0;
+  let cursorY = pageHeight - margin;
+
+  const pushPage = () => {
+    pageCommands.push("");
+    currentPage += 1;
+    cursorY = pageHeight - margin;
+  };
+
+  const ensureSpace = (height: number) => {
+    if (cursorY - height < margin) {
+      pushPage();
+    }
+  };
+
+  const drawText = (
+    text: string,
+    fontSize: number,
+    x: number,
+    y: number,
+    color: [number, number, number]
+  ) => {
+    const safe = escapePdfText(text);
+    pageCommands[currentPage] +=
+      `BT /F1 ${fontSize} Tf ${color[0]} ${color[1]} ${color[2]} rg ` +
+      `1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${safe}) Tj ET\n`;
+  };
+
+  const drawRule = () => {
+    ensureSpace(8);
+    const y = cursorY - 2;
+    pageCommands[currentPage] += `0.80 0.86 0.96 RG ${margin} ${y.toFixed(2)} m ${pageWidth - margin} ${y.toFixed(2)} l S\n`;
+    cursorY -= 8;
+  };
+
+  const rawLines = rawText.replace(/\r\n/g, "\n").split("\n");
+  if (rawLines.length === 0) {
+    rawLines.push("Security Simulation Report");
+  }
+
+  for (const rawLine of rawLines) {
+    const classified = classifyPdfLine(rawLine);
+    const config = styleMap[classified.style];
+    if (classified.style === "spacer") {
+      cursorY -= config.before;
+      continue;
+    }
+
+    cursorY -= config.before;
+    const content = `${config.prefix || ""}${classified.text}`;
+    const maxChars = Math.max(20, Math.floor((usableWidth - config.indent) / (config.fontSize * 0.52)));
+    const wrapped = wrapPdfText(content, maxChars);
+    const lineStep = config.fontSize * 1.38;
+    for (const line of wrapped) {
+      ensureSpace(lineStep);
+      drawText(line, config.fontSize, margin + config.indent, cursorY, config.color);
+      cursorY -= lineStep;
+    }
+    cursorY -= config.after;
+    if (config.drawRuleAfter) {
+      drawRule();
+    }
+  }
+
+  const pageStreams = pageCommands.map((stream) =>
+    stream.trim()
+      ? stream
+      : `BT /F1 12 Tf 0.1 0.2 0.45 rg 1 0 0 1 ${margin} ${pageHeight - margin} Tm (${escapePdfText(
+          "Security Simulation Report"
+        )}) Tj ET\n`
+  );
+
+  const objectCount = pageStreams.length * 2 + 3;
+  const objects: string[] = new Array(objectCount + 1);
+  objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+
+  const kids: string[] = [];
+  for (let index = 0; index < pageStreams.length; index += 1) {
+    const pageObject = 3 + index * 2;
+    const contentObject = pageObject + 1;
+    kids.push(`${pageObject} 0 R`);
+
+    const stream = pageStreams[index];
+
+    objects[contentObject] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+    objects[pageObject] =
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] ` +
+      `/Resources << /Font << /F1 ${objectCount} 0 R >> >> /Contents ${contentObject} 0 R >>`;
+  }
+
+  objects[2] = `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pageStreams.length} >>`;
+  objects[objectCount] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+
+  let output = "%PDF-1.4\n";
+  const offsets: number[] = new Array(objectCount + 1).fill(0);
+  for (let objectId = 1; objectId <= objectCount; objectId += 1) {
+    offsets[objectId] = output.length;
+    output += `${objectId} 0 obj\n${objects[objectId]}\nendobj\n`;
+  }
+
+  const xrefOffset = output.length;
+  output += `xref\n0 ${objectCount + 1}\n`;
+  output += "0000000000 65535 f \n";
+  for (let objectId = 1; objectId <= objectCount; objectId += 1) {
+    output += `${offsets[objectId].toString().padStart(10, "0")} 00000 n \n`;
+  }
+  output += `trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return new TextEncoder().encode(output);
+}
+
+function buildSimulationReportMarkdownLike(
+  simulation: NonNullable<DashboardState["simulation"]>,
+  checkpoints: NonNullable<DashboardState["simulation"]>["checkpoints"] | undefined,
+  postPointers: string[]
+): string {
+  const lines: string[] = [];
+  const checkpointRows = checkpoints || [];
+
+  lines.push("# Security Simulation Report");
+  lines.push("");
+  lines.push(`Generated: ${new Date().toISOString()}`);
+  lines.push(`Run: ${simulation.run_name}`);
+  lines.push(`Status: ${simulation.status}`);
+  lines.push(`Pace: ${simulation.weeks_per_iteration} weeks/iteration`);
+  lines.push(`Planned Features: ${simulation.features_requested ?? "N/A"} / ${simulation.features_simulated}`);
+  lines.push(`Report Path: ${simulation.report_path}`);
+  lines.push(`Manifest Path: ${simulation.manifest_path}`);
+  if (simulation.status_note) lines.push(`Note: ${simulation.status_note}`);
+  lines.push("");
+
+  lines.push("## Detailed iteration log");
+  if (checkpointRows.length === 0) {
+    lines.push("No detailed checkpoint notes were available.");
+  } else {
+    for (const checkpoint of checkpointRows) {
+      lines.push("");
+      lines.push(`### ${checkpoint.tag} (Iteration ${checkpoint.iteration.toString().padStart(3, "0")})`);
+      lines.push(`Goal: ${checkpoint.feature}`);
+      lines.push(`Status: ${checkpoint.status}`);
+      lines.push(`Timestamp: ${checkpoint.timestamp_utc}`);
+      lines.push(`Notes: ${checkpoint.notes || "No notes recorded."}`);
+      lines.push(`Changed files: ${checkpoint.changed_files}`);
+      lines.push("");
+      lines.push("#### Red Team");
+      lines.push(checkpoint.red_team_report || "No red-team report was generated.");
+      lines.push("");
+      lines.push("#### Blue Team");
+      lines.push(checkpoint.blue_team_report || "No blue-team report was generated.");
+      lines.push("");
+      lines.push("#### Refactorer");
+      lines.push(checkpoint.refactorer_report || "No refactorer report was generated.");
+      lines.push("");
+      lines.push("#### Historian");
+      lines.push(checkpoint.historian_report || "No historian report was generated.");
+    }
+  }
+
+  if (postPointers.length > 0) {
+    lines.push("");
+    lines.push("## What to do next");
+    for (const pointer of postPointers) {
+      lines.push(`- ${pointer}`);
+    }
+  }
+
+  lines.push("");
+  return lines.join("\n");
 }
 
 export default function Page() {
@@ -170,6 +505,8 @@ export default function Page() {
   const [diagramFocus, setDiagramFocus] = useState("");
   const [focusSelection, setFocusSelection] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedIterationTag, setSelectedIterationTag] = useState<string>("");
+  const [expandedReport, setExpandedReport] = useState<{ title: string; content: string } | null>(null);
 
   useEffect(() => {
     async function initialize() {
@@ -285,6 +622,17 @@ export default function Page() {
       setFocusSelection(false);
     }
   }, [selectedNodeId, focusSelection]);
+
+  useEffect(() => {
+    if (!expandedReport) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setExpandedReport(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [expandedReport]);
 
   const selectedNode = useMemo(
     () => findNode(data.graphs.nodes, selectedNodeId),
@@ -439,9 +787,39 @@ export default function Page() {
     return `${formatRiskLabel(label)}: ${count} signal${count === 1 ? "" : "s"} (${formatRiskPriority(count)})`;
   });
   const postPointers = simulationSummary?.post_work_pointers || [];
-  const prePointers = simulationSummary?.pre_work_pointers || [];
-  const featureSnapshot = simulationSummary?.feature_snapshot || [];
   const selectedDiagramTab = isDiagramTab(selectedTab) ? selectedTab : "architecture_services";
+  const activeCheckpoint = checkpoints.find((item) => item.tag === selectedIterationTag) || checkpoints[0] || null;
+  const openReportModal = (title: string, content: string) => {
+    const text = content.trim() || "No report generated for this iteration.";
+    setExpandedReport({ title, content: text });
+  };
+  const downloadSimulationPdf = () => {
+    if (!simulation) return;
+    const reportText = buildSimulationReportMarkdownLike(simulation, simulation.checkpoints, postPointers);
+    const bytes = buildPdfDocumentFromText(reportText);
+    const pdfBuffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(pdfBuffer).set(bytes);
+    const blob = new Blob([pdfBuffer], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${simulation.run_name || "security-simulation-report"}.pdf`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => {
+    if (checkpoints.length === 0) {
+      if (selectedIterationTag) {
+        setSelectedIterationTag("");
+      }
+      return;
+    }
+    const hasSelected = checkpoints.some((item) => item.tag === selectedIterationTag);
+    if (!hasSelected) {
+      setSelectedIterationTag(checkpoints[0].tag);
+    }
+  }, [checkpoints, selectedIterationTag]);
 
   const drillIntoSelected = () => {
     if (!selectedNodeScope) return;
@@ -700,61 +1078,77 @@ export default function Page() {
           ) : null}
 
           <div className="panel">
-            <h3>Start Here</h3>
-            <ol className="side-list">
-              {data.onboarding.start_here.map((item) => (
-                <li key={item} className="side-item">
-                  <code>{item}</code>
-                </li>
-              ))}
-            </ol>
-            <h3>Security Simulation</h3>
+            <div className="simulation-header-row">
+              <h3 className="simulation-main-title">Security Simulation</h3>
+              {simulation ? (
+                <button type="button" className="simulation-download-btn" onClick={downloadSimulationPdf}>
+                  Download PDF Report
+                </button>
+              ) : null}
+            </div>
             {simulation ? (
               <div className="simulation-block">
-                <h4>Run summary</h4>
-                <ul className="side-list compact-list">
-                  <li>
-                    <strong>Status:</strong> {simulation.status}
-                    {simulation.exit_code !== 0 ? ` (exit ${simulation.exit_code})` : null}
-                  </li>
-                  <li>
-                    <strong>Run:</strong> {simulation.run_name}
-                  </li>
-                  <li>
-                    <strong>Planned Features:</strong> {simulation.features_requested ?? "N/A"} /{" "}
-                    {simulation.features_simulated}
-                  </li>
-                  <li>
-                    <strong>Pace:</strong> {simulation.weeks_per_iteration} weeks/iteration
-                    {simulation.simulation_weeks ? ` | Total: ${simulation.simulation_weeks} weeks` : ""}
-                  </li>
-                  <li>
-                    <strong>Started:</strong> {safeDate(simulation.created_at_utc)}
-                  </li>
-                  <li>
-                    <strong>Report:</strong> <code>{simulation.report_path}</code>
-                  </li>
-                  <li>
-                    <strong>Manifest:</strong> <code>{simulation.manifest_path}</code>
-                  </li>
-                  {simulation.status_note ? (
+                <div className="simulation-section">
+                  <h4>Run summary</h4>
+                  <ul className="simulation-summary-list">
                     <li>
-                      <strong>Note:</strong> {simulation.status_note}
+                      <span className="summary-label">Status</span>
+                      <span className="summary-value">
+                        {simulation.status}
+                        {simulation.exit_code !== 0 ? ` (exit ${simulation.exit_code})` : null}
+                      </span>
                     </li>
-                  ) : null}
-                </ul>
-                {simulation.error ? <p className="note">Error: {simulation.error}</p> : null}
+                    <li>
+                      <span className="summary-label">Run</span>
+                      <span className="summary-value">{simulation.run_name}</span>
+                    </li>
+                    <li>
+                      <span className="summary-label">Planned Features</span>
+                      <span className="summary-value">
+                        {simulation.features_requested ?? "N/A"} / {simulation.features_simulated}
+                      </span>
+                    </li>
+                    <li>
+                      <span className="summary-label">Pace</span>
+                      <span className="summary-value">
+                        {simulation.weeks_per_iteration} weeks/iteration
+                        {simulation.simulation_weeks ? ` | Total: ${simulation.simulation_weeks} weeks` : ""}
+                      </span>
+                    </li>
+                    <li>
+                      <span className="summary-label">Started</span>
+                      <span className="summary-value">{safeDate(simulation.created_at_utc)}</span>
+                    </li>
+                    <li>
+                      <span className="summary-label">Report</span>
+                      <code className="simulation-path">{simulation.report_path}</code>
+                    </li>
+                    <li>
+                      <span className="summary-label">Manifest</span>
+                      <code className="simulation-path">{simulation.manifest_path}</code>
+                    </li>
+                    {simulation.status_note ? (
+                      <li>
+                        <span className="summary-label">Note</span>
+                        <span className="summary-value">{simulation.status_note}</span>
+                      </li>
+                    ) : null}
+                  </ul>
+                  {simulation.error ? <p className="note">Error: {simulation.error}</p> : null}
+                </div>
 
-                <h4>What this means</h4>
-                <ul className="side-list compact-list">
-                  <li>The project was copied into a sandbox before making any changes.</li>
-                  <li>Each successful iteration adds one feature and records agent findings.</li>
-                  <li>Checkpoint metadata below is the same source used by `simulation_report.md`.</li>
-                  <li>Use this report as your onboarding handoff for the next engineering cycle.</li>
-                </ul>
+                <div className="simulation-section">
+                  <h4>What this means</h4>
+                  <ul className="side-list compact-list">
+                    <li>The project was copied into a sandbox before making any changes.</li>
+                    <li>Each successful iteration adds one feature and records agent findings.</li>
+                    <li>Checkpoint metadata below is the same source used by `simulation_report.md`.</li>
+                    <li>Use this report as your onboarding handoff for the next engineering cycle.</li>
+                  </ul>
+                </div>
 
                 {simulationSummary ? (
-                  <>
+                  <div className="simulation-section">
                     <h4>Key repo insights for the next feature</h4>
                     <ul className="side-list compact-list">
                       <li>Planned features: {simulationSummary.requested_count}</li>
@@ -772,7 +1166,7 @@ export default function Page() {
                     <h4>Priority now</h4>
                     {riskPriorityLines.length > 0 ? (
                       <>
-                        <p>
+                        <p className="simulation-highlight">
                           Main issues the simulation repeated:{" "}
                           {riskPriorityLines.join(", ")}
                         </p>
@@ -785,120 +1179,198 @@ export default function Page() {
                     ) : (
                       <p>No repeated risk themes were detected.</p>
                     )}
-                    <h4>Quick pre-read list</h4>
-                    <ul className="side-list compact-list">
-                      {prePointers.map((pointer) => (
-                        <li key={pointer}>{pointer}</li>
-                      ))}
-                    </ul>
-                  </>
+                  </div>
                 ) : null}
 
-                <h4>Iteration timeline (plain English)</h4>
-                {checkpoints.length > 0 ? (
-                  checkpoints.map((checkpoint, index) => (
-                    <div key={checkpoint.tag}>
-                      <p className="simulation-checkpoint-line">
-                        <strong>
-                          {statusBadge(checkpoint.status)} {checkpoint.tag}
-                        </strong>{" "}
-                        - {checkpoint.feature}
-                      </p>
-                      <p className="muted">
-                        Result: {checkpoint.status} | Timestamp: {safeDate(checkpoint.timestamp_utc)} | Commit:{" "}
-                        <code>{checkpoint.commit ? checkpoint.commit.slice(0, 8) : "N/A"}</code> | Changed files:{" "}
-                        {checkpoint.changed_files}
-                      </p>
-                      {checkpoint.notes ? <p>Notes: {checkpoint.notes}</p> : null}
-                      {index + 1 < checkpoints.length ? <hr className="report-separator" /> : null}
+                <div className="simulation-section">
+                  <h4>Detailed iteration log</h4>
+                  {checkpoints.length > 0 ? (
+                    <>
+                    <div className="iteration-tabs">
+                      {checkpoints.map((checkpoint) => (
+                        <button
+                          key={checkpoint.tag}
+                          type="button"
+                          className={`iteration-tab-btn ${selectedIterationTag === checkpoint.tag ? "active" : ""}`}
+                          onClick={() => setSelectedIterationTag(checkpoint.tag)}
+                          title={checkpoint.feature}
+                        >
+                          Iteration {checkpoint.iteration.toString().padStart(3, "0")}
+                        </button>
+                      ))}
                     </div>
-                  ))
-                ) : (
-                  <p className="muted">No per-iteration checkpoint rows available yet.</p>
-                )}
-
-                <h4>Detailed iteration log</h4>
-                {checkpoints.length > 0 ? (
-                  checkpoints.map((checkpoint, index) => (
-                    <div key={`detail-${checkpoint.tag}`} className="simulation-checkpoint-detail">
-                      <h5 className="simulation-checkpoint-title">
-                        {checkpoint.tag} (Iteration {checkpoint.iteration.toString().padStart(3, "0")})
-                      </h5>
-                      <p>
-                        <strong>Goal:</strong> {checkpoint.feature}
-                      </p>
-                      <p>
-                        <strong>Status:</strong> {statusBadge(checkpoint.status)} {checkpoint.status}
-                      </p>
-                      <p>
-                        <strong>Timestamp:</strong> {safeDate(checkpoint.timestamp_utc)}
-                      </p>
-                      <p>
-                        <strong>Notes:</strong> {checkpoint.notes || "No notes recorded."}
-                      </p>
-                      <p>
-                        <strong>Changed files:</strong> {checkpoint.changed_files}
-                      </p>
-                      <div className="simulation-agent-reports">
-                        <div>
-                          <strong>Red Team</strong>
-                          <div className="agent-report-card">{renderAgentReport(checkpoint.red_team_report || "")}</div>
-                        </div>
-                        <div>
-                          <strong>Blue Team</strong>
-                          <div className="agent-report-card">{renderAgentReport(checkpoint.blue_team_report || "")}</div>
-                        </div>
-                        <div>
-                          <strong>Refactorer</strong>
-                          <div className="agent-report-card">{renderAgentReport(checkpoint.refactorer_report || "")}</div>
-                        </div>
-                        <div>
-                          <strong>Historian</strong>
-                          <div className="agent-report-card">{renderAgentReport(checkpoint.historian_report || "")}</div>
+                    {activeCheckpoint ? (
+                      <div key={`detail-${activeCheckpoint.tag}`} className="simulation-checkpoint-detail">
+                        <h5 className="simulation-checkpoint-title">
+                          {activeCheckpoint.tag} (Iteration {activeCheckpoint.iteration.toString().padStart(3, "0")})
+                        </h5>
+                        <p>
+                          <strong>Goal:</strong> {activeCheckpoint.feature}
+                        </p>
+                        <p>
+                          <strong>Status:</strong> {statusBadge(activeCheckpoint.status)} {activeCheckpoint.status}
+                        </p>
+                        <p>
+                          <strong>Timestamp:</strong> {safeDate(activeCheckpoint.timestamp_utc)}
+                        </p>
+                        <p>
+                          <strong>Notes:</strong> {activeCheckpoint.notes || "No notes recorded."}
+                        </p>
+                        <p>
+                          <strong>Changed files:</strong> {activeCheckpoint.changed_files}
+                        </p>
+                        <div className="simulation-agent-reports">
+                          <div>
+                            <strong>Red Team</strong>
+                            <div
+                              className="agent-report-card agent-report-card-interactive"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() =>
+                                openReportModal(
+                                  `Red Team - ${activeCheckpoint.tag}`,
+                                  activeCheckpoint.red_team_report || ""
+                                )
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  openReportModal(
+                                    `Red Team - ${activeCheckpoint.tag}`,
+                                    activeCheckpoint.red_team_report || ""
+                                  );
+                                }
+                              }}
+                            >
+                              <span className="agent-card-hover-hint">Open full report</span>
+                              {renderAgentReport(activeCheckpoint.red_team_report || "")}
+                            </div>
+                          </div>
+                          <div>
+                            <strong>Blue Team</strong>
+                            <div
+                              className="agent-report-card agent-report-card-interactive"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() =>
+                                openReportModal(
+                                  `Blue Team - ${activeCheckpoint.tag}`,
+                                  activeCheckpoint.blue_team_report || ""
+                                )
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  openReportModal(
+                                    `Blue Team - ${activeCheckpoint.tag}`,
+                                    activeCheckpoint.blue_team_report || ""
+                                  );
+                                }
+                              }}
+                            >
+                              <span className="agent-card-hover-hint">Open full report</span>
+                              {renderAgentReport(activeCheckpoint.blue_team_report || "")}
+                            </div>
+                          </div>
+                          <div>
+                            <strong>Refactorer</strong>
+                            <div
+                              className="agent-report-card agent-report-card-interactive"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() =>
+                                openReportModal(
+                                  `Refactorer - ${activeCheckpoint.tag}`,
+                                  activeCheckpoint.refactorer_report || ""
+                                )
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  openReportModal(
+                                    `Refactorer - ${activeCheckpoint.tag}`,
+                                    activeCheckpoint.refactorer_report || ""
+                                  );
+                                }
+                              }}
+                            >
+                              <span className="agent-card-hover-hint">Open full report</span>
+                              {renderAgentReport(activeCheckpoint.refactorer_report || "")}
+                            </div>
+                          </div>
+                          <div>
+                            <strong>Historian</strong>
+                            <div
+                              className="agent-report-card agent-report-card-interactive"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() =>
+                                openReportModal(
+                                  `Historian - ${activeCheckpoint.tag}`,
+                                  activeCheckpoint.historian_report || ""
+                                )
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  openReportModal(
+                                    `Historian - ${activeCheckpoint.tag}`,
+                                    activeCheckpoint.historian_report || ""
+                                  );
+                                }
+                              }}
+                            >
+                              <span className="agent-card-hover-hint">Open full report</span>
+                              {renderAgentReport(activeCheckpoint.historian_report || "")}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      {index + 1 < checkpoints.length ? <hr className="report-separator" /> : null}
-                    </div>
-                  ))
-                ) : (
-                  <p className="muted">No detailed checkpoint notes were available.</p>
-                )}
+                    ) : null}
+                    </>
+                  ) : (
+                    <p className="muted">No detailed checkpoint notes were available.</p>
+                  )}
+                </div>
 
                 {postPointers.length > 0 ? (
-                  <>
+                  <div className="simulation-section">
                     <h4>What to do next</h4>
                     <ul className="side-list compact-list">
                       {postPointers.map((pointer) => (
                         <li key={pointer}>{pointer}</li>
                       ))}
                     </ul>
-                  </>
+                  </div>
                 ) : null}
 
-                {featureSnapshot.length > 0 ? (
-                  <>
-                    <h4>Feature snapshot</h4>
-                    <ol className="side-list compact-list">
-                      {featureSnapshot.map((entry) => (
-                        <li key={entry}>{entry}</li>
-                      ))}
-                    </ol>
-                  </>
-                ) : null}
               </div>
             ) : (
               <p className="muted">No simulation run has been attached for this repo yet.</p>
             )}
-            <h3>Key Flows</h3>
-            <ul className="side-list">
-              {data.onboarding.key_flows.map((flow) => (
-                <li key={flow.name} className="side-item">
-                  <strong>{flow.name}</strong>: {flow.flow}
-                </li>
-              ))}
-            </ul>
-            <h3>KIV</h3>
-            <p>{data.kiv.graph_3d}</p>
+            {expandedReport ? (
+              <div className="report-modal-overlay" onClick={() => setExpandedReport(null)}>
+                <div
+                  className="report-modal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={expandedReport.title}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="report-modal-header">
+                    <h4>{expandedReport.title}</h4>
+                    <button
+                      type="button"
+                      className="report-modal-close"
+                      onClick={() => setExpandedReport(null)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="report-modal-body">{renderAgentReport(expandedReport.content)}</div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="panel">
@@ -970,5 +1442,3 @@ export default function Page() {
     </main>
   );
 }
-
-
