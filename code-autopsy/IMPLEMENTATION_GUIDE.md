@@ -52,7 +52,19 @@ From workspace root:
 python3 code-autopsy/scripts/code_autopsy.py .
 ```
 
-GitHub URL mode:
+Run with simulation attached:
+
+```bash
+python3 code-autopsy/scripts/code_autopsy.py https://github.com/org/repo --run-simulation
+```
+
+Simulation defaults used by this integration:
+
+- `--max-iterations` default is `9`
+- simulation window is `--weeks-per-iteration 2`
+- no explicit `--iteration-command` required; `simulate_agent.py` handles feature execution policy itself
+
+Or GitHub URL mode:
 
 ```bash
 python3 code-autopsy/scripts/code_autopsy.py https://github.com/org/repo

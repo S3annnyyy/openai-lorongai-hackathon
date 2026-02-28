@@ -17,7 +17,18 @@ Local install (from this repo):
 bash code-autopsy/scripts/install_skill_local.sh
 ```
 
-Install directly from GitHub:
+Run autopsy + simulation (security simulation agent automatically attached):
+
+```bash
+python3 code-autopsy/scripts/code_autopsy.py <repo_or_github_url> --run-simulation
+```
+
+Notes:
+- Simulation uses a 2-week iteration window by design.
+- By default, up to 9 iterations will be attempted.
+- No manual `--source-ref` or `--features-file` is required; the simulation engine infers features from repo signals when needed.
+
+Default output:
 
 ```bash
 python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-installer/scripts/install-skill-from-github.py" \

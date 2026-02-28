@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import socket
@@ -18,11 +19,13 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
+from datetime import datetime, timezone
 
 from xray_core import XrayConfig, discover_source_files, run_xray
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_BASE = SKILL_ROOT / ".autopsy-outputs"
+SIMULATION_DEFAULT_WORKSPACE_SUBDIR = "simulations"
 
 
 @dataclass
@@ -159,6 +162,208 @@ def _prepare_source(source: str, output_base: Path, keep_clone: bool) -> Prepare
     repo_name = _repo_name_from_source(source, repo_path=repo_path)
     output_root = output_base / repo_name
     return PreparedSource(repo_path=repo_path, repo_name=repo_name, output_root=output_root, cleanup_path=None)
+
+
+def _resolve_simulation_context(provided: str | None) -> Path | None:
+    if provided:
+        explicit = Path(provided).expanduser().resolve()
+        if explicit.exists():
+            return explicit
+        raise FileNotFoundError(f"Simulation context file does not exist: {explicit}")
+
+    candidates = [
+        SKILL_ROOT / "simulation_context.md",
+        SKILL_ROOT / ".." / "simulation_context.md",
+        Path(__file__).resolve().parents[2] / "simulation_context.md",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def _make_simulation_run_name(repo_name: str, provided: str | None) -> str:
+    if provided:
+        return provided
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return f"{repo_name}-{timestamp}-sim"
+
+
+def _load_simulation_manifest(manifest_path: Path) -> dict[str, object]:
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _build_ui_checkpoint_rows(manifest: dict[str, object]) -> list[dict[str, object]]:
+    raw_checkpoints = manifest.get("checkpoints")
+    if not isinstance(raw_checkpoints, list):
+        return []
+
+    checkpoints: list[dict[str, object]] = []
+    for item in raw_checkpoints:
+        if not isinstance(item, dict):
+            continue
+
+        raw_iteration = item.get("iteration", 0)
+        try:
+            iteration = int(raw_iteration)
+        except (TypeError, ValueError):
+            iteration = 0
+        status = str(item.get("status", ""))
+        notes = str(item.get("notes", ""))
+        changed_files = item.get("files_changed")
+        file_count = len(changed_files) if isinstance(changed_files, list) else 0
+
+        checkpoints.append(
+            {
+                "iteration": iteration,
+                "tag": str(item.get("tag", "")),
+                "feature": str(item.get("feature", "")),
+                "status": status,
+                "commit": str(item.get("commit", "")),
+                "timestamp_utc": str(item.get("timestamp_utc", "")),
+                "notes": notes,
+                "changed_files": file_count,
+                "red_team_report": str(item.get("red_team_report", "")),
+                "blue_team_report": str(item.get("blue_team_report", "")),
+                "refactorer_report": str(item.get("refactorer_report", "")),
+                "historian_report": str(item.get("historian_report", "")),
+            }
+        )
+
+    return [entry for entry in checkpoints if entry.get("iteration", 0) > 0]
+
+
+def _run_simulation_agent(prepared: PreparedSource, args: argparse.Namespace) -> dict[str, object]:
+    if args.simulation_max_iterations < 1:
+        raise ValueError("--simulation-max-iterations must be >= 1")
+
+    simulation_root = (
+        Path(args.simulation_workspace)
+        if args.simulation_workspace
+        else prepared.output_root / SIMULATION_DEFAULT_WORKSPACE_SUBDIR
+    )
+    simulation_root.mkdir(parents=True, exist_ok=True)
+
+    run_name = _make_simulation_run_name(prepared.repo_name, args.simulation_run_name)
+    simulation_workspace = simulation_root / run_name
+    if simulation_workspace.exists():
+        simulation_workspace = _next_simulation_dir(simulation_workspace)
+        run_name = simulation_workspace.name
+
+    simulate_agent = SKILL_ROOT / "scripts" / "simulate_agent.py"
+    if not simulate_agent.exists():
+        simulate_agent = SKILL_ROOT.parent / "simulate_agent.py"
+    if not simulate_agent.exists():
+        raise FileNotFoundError(f"simulate_agent.py not found: {simulate_agent}")
+
+    command = [
+        sys.executable,
+        str(simulate_agent),
+        "--source",
+        str(prepared.repo_path),
+        "--run-name",
+        run_name,
+        "--workspace",
+        str(simulation_root),
+        "--max-iterations",
+        str(args.simulation_max_iterations),
+        "--weeks-per-iteration",
+        "2",
+    ]
+
+    if args.simulation_agent_context:
+        command.extend(["--agent-context", args.simulation_agent_context])
+    else:
+        fallback_context = _resolve_simulation_context(None)
+        if fallback_context:
+            command.extend(["--agent-context", str(fallback_context)])
+
+    process = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        cwd=prepared.repo_path,
+        check=False,
+    )
+
+    output = (process.stdout or "") + (process.stderr or "")
+    manifest_path = simulation_workspace / "run_manifest.json"
+    report_path = simulation_workspace / "simulation_report.md"
+    if manifest_path.exists():
+        manifest = _load_simulation_manifest(manifest_path)
+    else:
+        manifest = {}
+        manifest["status"] = "failed" if process.returncode else "completed"
+
+    summary = {
+        "enabled": True,
+        "run_name": run_name,
+        "status": manifest.get("status", "failed" if process.returncode else "completed"),
+        "run_workspace": str(simulation_root),
+        "run_dir": str(simulation_workspace),
+        "manifest_path": str(manifest_path),
+        "report_path": str(report_path),
+        "features_requested": len(manifest.get("features_requested", [])) if isinstance(manifest.get("features_requested"), list) else None,
+        "features_simulated": manifest.get("features_simulated", 0),
+        "simulation_weeks": manifest.get("simulation_weeks"),
+        "weeks_per_iteration": manifest.get("weeks_per_iteration", 2),
+        "created_at_utc": manifest.get("created_at_utc"),
+        "exit_code": process.returncode,
+        "command": " ".join(command),
+    }
+
+    if process.returncode != 0:
+        summary["error"] = output.strip() or "simulation command failed"
+        return summary
+
+    if manifest:
+        summary["status"] = manifest.get("status", "completed")
+        summary["status_note"] = manifest.get("status", "")
+        summary["features_requested"] = len(manifest.get("features_requested", []))
+        summary["features_simulated"] = manifest.get("features_simulated", 0)
+        summary["top_hotspots"] = manifest.get("top_hotspots", [])
+        summary["source"] = manifest.get("source", "")
+        summary["simulation_start_iso"] = manifest.get("simulation_start_iso")
+        summary["checkpoints"] = _build_ui_checkpoint_rows(manifest)
+        simulation_summary = manifest.get("simulation_summary")
+        if isinstance(simulation_summary, dict):
+            summary["summary"] = simulation_summary
+    else:
+        summary["status"] = "completed"
+        summary["status_note"] = "simulation finished but manifest was not generated"
+
+    return summary
+
+
+def _next_simulation_dir(base: Path) -> Path:
+    for index in range(1, 50):
+        candidate = base.with_name(f"{base.name}-{index}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"could not allocate simulation run directory for {base}")
+
+
+def _write_simulation_into_dashboard(output_root: Path, simulation_summary: dict[str, object]) -> None:
+    dashboard_path = output_root / "dashboard_state.json"
+    if not dashboard_path.exists():
+        return
+
+    payload = json.loads(dashboard_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return
+
+    payload["simulation"] = simulation_summary
+    if isinstance(payload.get("kiv"), dict):
+        payload["kiv"]["simulation_attached"] = True
+    else:
+        payload["kiv"] = {"graph_3d": "Deferred to Phase 2", "simulation_attached": True}
+    with dashboard_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
 
 
 def _run_node_script(script_path: Path, args: list[str], cwd: Path) -> tuple[bool, str]:
@@ -326,8 +531,23 @@ def run_once(args: argparse.Namespace) -> tuple[Path, list[str], list[str]]:
     started = time.time()
     result = run_xray(config)
     elapsed = time.time() - started
+    simulation_summary: dict[str, object] | None = None
 
     warnings = list(result.get("warnings", []))
+    if args.run_simulation:
+        try:
+            simulation_summary = _run_simulation_agent(prepared, args)
+            if isinstance(simulation_summary, dict):
+                _write_simulation_into_dashboard(prepared.output_root, simulation_summary)
+                status = simulation_summary.get("status")
+                exit_code = simulation_summary.get("exit_code")
+                if status:
+                    warnings.append(f"Simulation status: {status}")
+                if exit_code is not None:
+                    warnings.append(f"Simulation command exited with code {exit_code}")
+        except Exception as error:  # noqa: BLE001
+            warnings.append(f"Simulation pipeline failed: {error}")
+
     if args.viewer:
         warnings.extend(_launch_viewer(prepared.repo_name, args.viewer_port, args.open_viewer, output_base))
     if args.export_images:
@@ -449,6 +669,20 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Keep temporary downloaded/cloned repository when source is a GitHub URL.",
     )
+    _add_bool_flag(
+        parser,
+        name="--run-simulation",
+        default=False,
+        help_text="Run the simulation agent after X-Ray analysis.",
+    )
+    parser.add_argument("--simulation-max-iterations", type=int, default=9, help="Maximum iterations for simulation runs.")
+    parser.add_argument(
+        "--simulation-workspace",
+        default="",
+        help="Base folder for simulation runs. Defaults to <output>/{repo}/simulations.",
+    )
+    parser.add_argument("--simulation-run-name", default="", help="Optional run folder name for simulation output.")
+    parser.add_argument("--simulation-agent-context", default="", help="Optional path to simulation agent context file.")
     return parser.parse_args()
 
 
