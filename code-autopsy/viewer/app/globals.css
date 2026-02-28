@@ -259,23 +259,139 @@ main {
 
 .diagram-toolbar {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.tool-btn {
+.zoom-group,
+.diagram-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.zoom-level {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
   border: 1px solid var(--panel-border);
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 0.78rem;
+  background: #eff6ff;
+  color: var(--text);
+}
+
+.icon-btn,
+.action-btn {
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 0.78rem;
   background: #ffffff;
   color: var(--text);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: transform 100ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.tool-btn:disabled {
+.icon-btn svg,
+.action-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  width: 31px;
+  height: 31px;
+  justify-content: center;
+  padding: 0;
+}
+
+.icon-btn:hover:not(:disabled),
+.action-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #93c5fd;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
+}
+
+.action-btn {
+  padding: 6px 10px;
+}
+
+.action-btn.success {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.icon-btn:disabled,
+.action-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.mermaid-shell-interactive {
+  cursor: zoom-in;
+}
+
+.mermaid-shell-interactive:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+.mermaid-shell.dragging {
+  cursor: grabbing;
+}
+
+.mermaid-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.mermaid-static-content svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  shape-rendering: geometricPrecision;
+  text-rendering: geometricPrecision;
+}
+
+.mermaid-zoom-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: fit-content;
+  transform-origin: left top;
+}
+
+.mermaid-zoom-content svg {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: none;
+  shape-rendering: geometricPrecision;
+  text-rendering: geometricPrecision;
+}
+
+.diagram-hint {
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .diagram-raw {
@@ -415,6 +531,36 @@ main {
   margin-top: 12px;
 }
 
+.diagram-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(2px);
+  padding: 24px;
+}
+
+.diagram-modal {
+  width: min(96vw, 1500px);
+  max-height: calc(100vh - 48px);
+  margin: 0 auto;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  box-shadow: 0 20px 64px rgba(15, 23, 42, 0.35);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mermaid-shell-modal {
+  min-height: 70vh;
+  height: calc(100vh - 180px);
+  overflow: hidden;
+  touch-action: none;
+}
+
 @media (max-width: 1080px) {
   .layout-grid {
     grid-template-columns: 1fr;
@@ -429,5 +575,25 @@ main {
   .drawio-shell {
     min-height: 420px;
     height: 420px;
+  }
+
+  .diagram-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .diagram-modal-overlay {
+    padding: 10px;
+  }
+
+  .diagram-modal {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+    padding: 12px;
+  }
+
+  .mermaid-shell-modal {
+    min-height: 62vh;
+    height: calc(100vh - 160px);
   }
 }
