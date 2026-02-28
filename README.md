@@ -21,7 +21,7 @@ bash code-autopsy/scripts/install_skill_local.sh
 Run autopsy + simulation (security simulation agent automatically attached):
 
 ```bash
-python3 code-autopsy/scripts/code_autopsy.py <repo_or_github_url> --run-simulation
+python3 code-autopsy/scripts/code_autopsy.py <repo_or_github_url>
 ```
 
 Notes:
@@ -62,6 +62,7 @@ python3 code-autopsy/scripts/code_autopsy.py <source> --no-viewer --no-open-view
 ## Current defaults on `main`
 
 - output root: `code-autopsy/.autopsy-outputs/<repo_name>/`
+- simulation agent run: enabled (disable with `--no-run-simulation`)
 - viewer auto-launch: enabled
 - browser open: enabled
 - viewer URL: `http://localhost:3000/?repo=<repo_name>&tab=architecture_services`

@@ -816,8 +816,8 @@ def parse_args() -> argparse.Namespace:
     _add_bool_flag(
         parser,
         name="--run-simulation",
-        default=False,
-        help_text="Run the simulation agent after X-Ray analysis.",
+        default=True,
+        help_text="Run the simulation agent after X-Ray analysis (default: true).",
     )
     parser.add_argument("--simulation-max-iterations", type=int, default=9, help="Maximum iterations for simulation runs.")
     parser.add_argument(
