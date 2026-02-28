@@ -100,7 +100,7 @@ export default function Page() {
   const [maxEdges, setMaxEdges] = useState(300);
   const [graphLevel, setGraphLevel] = useState<"service" | "package" | "file">("service");
   const [drillPrefix, setDrillPrefix] = useState<string | null>(null);
-  const [diagramDetail, setDiagramDetail] = useState<"overview" | "standard" | "full">("overview");
+  const [diagramDetail, setDiagramDetail] = useState<"overview" | "full">("overview");
   const [diagramFocus, setDiagramFocus] = useState("");
   const [focusSelection, setFocusSelection] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -595,10 +595,9 @@ export default function Page() {
                   <select
                     className="control-select"
                     value={diagramDetail}
-                    onChange={(event) => setDiagramDetail(event.target.value as "overview" | "standard" | "full")}
+                    onChange={(event) => setDiagramDetail(event.target.value as "overview" | "full")}
                   >
                     <option value="overview">Overview</option>
-                    <option value="standard">Standard</option>
                     <option value="full">Full Detail</option>
                   </select>
                   <input
@@ -615,6 +614,7 @@ export default function Page() {
                 expanded
                 detailLevel={diagramDetail}
                 focusText={diagramFocus}
+                diagramKind={selectedDiagramTab}
               />
             </>
           )}
