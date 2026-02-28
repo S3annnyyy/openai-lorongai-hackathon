@@ -15,8 +15,57 @@ export type GraphEdge = {
   reason?: string;
 };
 
+export type SimulationCheckpoint = {
+  iteration: number;
+  tag: string;
+  feature: string;
+  status: string;
+  commit: string;
+  timestamp_utc: string;
+  notes: string;
+  changed_files: number;
+  red_team_report?: string;
+  blue_team_report?: string;
+  refactorer_report?: string;
+  historian_report?: string;
+};
+
 export type DashboardState = {
   generated_at: string;
+  simulation?: {
+    enabled: boolean;
+    run_name: string;
+    status: string;
+    run_workspace: string;
+    run_dir: string;
+    manifest_path: string;
+    report_path: string;
+    features_requested: number | null;
+    features_simulated: number;
+    simulation_weeks: number | null;
+    weeks_per_iteration: number;
+    created_at_utc: string;
+    exit_code: number;
+    command: string;
+    status_note?: string;
+    error?: string;
+    top_hotspots?: unknown[];
+    source?: string;
+    simulation_start_iso?: string;
+    checkpoints?: SimulationCheckpoint[];
+    summary?: {
+      status: string;
+      requested_count: number;
+      features_completed: number;
+      iteration_success_rate: number;
+      last_stable_checkpoint: string;
+      risk_counts: Array<[string, number]>;
+      hotspot_lines: string[];
+      pre_work_pointers: string[];
+      post_work_pointers: string[];
+      feature_snapshot: string[];
+    };
+  };
   summary: {
     repo_name: string;
     repo_root: string;

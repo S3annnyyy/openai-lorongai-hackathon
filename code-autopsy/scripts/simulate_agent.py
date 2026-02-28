@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import json
+import hashlib
 import shlex
 import re
 import shutil
@@ -351,6 +352,18 @@ def sanitize_slug(text: str, max_len: int = 64) -> str:
     if not slug:
         slug = "feature"
     return slug[:max_len].rstrip("-")
+
+
+def compact_slug(slug: str, index: int, max_len: int = 32) -> str:
+    """Return a short, deterministic slug variant safe for Windows path limits."""
+    slug = slug.strip("-")
+    if not slug:
+        slug = f"feature-{index:03d}"
+    if len(slug) <= max_len:
+        return slug
+    digest = hashlib.sha1(slug.encode("utf-8")).hexdigest()[:8]
+    base_len = max(4, max_len - 9)
+    return f"{slug[:base_len]}-{digest}"
 
 
 def symbol_from_slug(slug: str) -> str:
@@ -1709,6 +1722,7 @@ def apply_iterative_refactors(codebase: Path, iteration: int, feature: str) -> s
 
 def init_git_repo(codebase: Path) -> None:
     run_command(["git", "init"], cwd=codebase)
+    run_command(["git", "config", "core.longpaths", "true"], cwd=codebase)
     run_command(["git", "config", "user.name", "Simulation Agent"], cwd=codebase)
     run_command(["git", "config", "user.email", "simulation-agent@example.com"], cwd=codebase)
 
@@ -2070,7 +2084,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 1
 
     for index, feature in enumerate(features, start=1):
-        slug = sanitize_slug(feature)
+        slug = compact_slug(sanitize_slug(feature), index=index, max_len=28)
         status = "ok"
         notes = "Simulated feature artifact generated."
         agent_reports: Dict[str, str] = {
@@ -2187,6 +2201,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "agent_context_source": str(args.agent_context) if args.agent_context else "",
         "copy_excludes": excludes,
         "checkpoints": [asdict(item) for item in checkpoints],
+    }
+    summary_payload = build_simulation_insights(manifest, checkpoints)
+    pre_work_pointers = build_reader_pointers(manifest, checkpoints, pre_work=True, insights=summary_payload)
+    post_work_pointers = build_reader_pointers(manifest, checkpoints, pre_work=False, insights=summary_payload)
+    risk_counts = cast(List[tuple[str, int]], summary_payload["risk_counts"])
+    hotspot_lines = cast(List[str], summary_payload["hotspot_lines"])
+    successful_iterations = cast(List[CheckpointRecord], summary_payload["successful_iterations"])
+    status = str(summary_payload["status"])
+    simulated = cast(int, summary_payload["simulated"])
+    requested = cast(List[str], summary_payload["requested"])
+    iteration_success_rate = cast(float, summary_payload["iteration_success_rate"])
+    manifest["simulation_summary"] = {
+        "status": status,
+        "requested_count": len(requested),
+        "features_completed": simulated,
+        "iteration_success_rate": iteration_success_rate,
+        "last_stable_checkpoint": successful_iterations[-1].tag if successful_iterations else "",
+        "risk_counts": [[label, count] for label, count in risk_counts],
+        "hotspot_lines": hotspot_lines,
+        "pre_work_pointers": pre_work_pointers,
+        "post_work_pointers": post_work_pointers,
+        "feature_snapshot": [
+            f"{item.iteration:03d} — {item.feature} ({item.status})" for item in cast(List[CheckpointRecord], summary_payload["iterations"])
+        ],
     }
 
     manifest_path = run_dir / "run_manifest.json"
