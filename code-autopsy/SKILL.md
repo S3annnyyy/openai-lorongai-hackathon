@@ -9,6 +9,12 @@ Execute a full-system forensic pass on a repository and return a diagnostic dash
 
 ## Quick Start
 
+Choose one input mode:
+- GitHub URL mode: user pastes `https://github.com/org/repo` and run `scripts/run_autopsy.py --source <url> --workspace-root <workspace_root>`.
+- Local workspace mode: run `scripts/run_autopsy.py --source . --workspace-root .` from the repository root in VS Code/Codex.
+
+Both modes write outputs to `.codeAutopsy/<repo_name>/`.
+
 1. Build baseline artifacts:
 - `repo.json`
 - `graph.json`
@@ -31,6 +37,29 @@ Execute a full-system forensic pass on a repository and return a diagnostic dash
 - `diagrams/architecture.mmd` (required)
 - `diagrams/architecture.drawio` (optional)
 - Eraser import payload (optional) per `references/diagram-exports.md`
+
+## Input and Output Contract
+
+Use `scripts/run_autopsy.py` as the default entrypoint for this skill.
+
+CLI contract:
+- `--source`: GitHub URL or local repository path.
+- `--workspace-root`: where `.codeAutopsy/<repo_name>/` is created.
+- `--repo-name`: optional output folder override.
+
+Examples:
+- `python scripts/run_autopsy.py --source https://github.com/org/repo --workspace-root .`
+- `python scripts/run_autopsy.py --source . --workspace-root .`
+
+Output root:
+- `.codeAutopsy/<repo_name>/repo.json`
+- `.codeAutopsy/<repo_name>/graph.json`
+- `.codeAutopsy/<repo_name>/metrics.json`
+- `.codeAutopsy/<repo_name>/decay_forecast.json`
+- `.codeAutopsy/<repo_name>/attack_surface.json`
+- `.codeAutopsy/<repo_name>/failure_simulation.json`
+- `.codeAutopsy/<repo_name>/dashboard_state.json`
+- `.codeAutopsy/<repo_name>/diagrams/architecture.mmd`
 
 ## Operating Model
 
@@ -149,5 +178,6 @@ Rank breakage likelihood and blast radius. Output causal chains, not only scores
 - `references/scoring-models.md`: risk, decay, and fragility formulas.
 - `references/diagram-exports.md`: Mermaid/draw.io/Eraser export expectations.
 - `references/agent-prompts.md`: scoped prompts for each agent.
+- `scripts/run_autopsy.py`: baseline orchestrator for GitHub URL or local path inputs.
 - `scripts/render_mermaid_from_graph.py`: graph to Mermaid conversion.
 - `scripts/score_decay.py`: baseline decay score calculator.

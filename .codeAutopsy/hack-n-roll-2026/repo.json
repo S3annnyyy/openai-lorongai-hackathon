@@ -1,0 +1,17 @@
+{
+  "name": "hack-n-roll-2026",
+  "root": "C:\\Users\\seany\\Desktop\\Projects\\openai-lorongai-hackathon\\.codeAutopsy\\_sources\\hack-n-roll-2026",
+  "source_kind": "github_url",
+  "languages": [
+    "JavaScript",
+    "Rust",
+    "TypeScript"
+  ],
+  "frameworks": [],
+  "entrypoints": [],
+  "indexing": {
+    "strategy": "full",
+    "files_indexed": 14,
+    "files_skipped": 0
+  }
+}

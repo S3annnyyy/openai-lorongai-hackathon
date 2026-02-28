@@ -1,0 +1,103 @@
+{
+  "nodes": [
+    {
+      "id": "module:visualizer/vite.config.js",
+      "type": "module",
+      "label": "visualizer/vite.config.js",
+      "owner": null,
+      "criticality": 0.0
+    },
+    {
+      "id": "module:visualizer/src/audio.js",
+      "type": "module",
+      "label": "visualizer/src/audio.js",
+      "owner": null,
+      "criticality": 0.4889
+    },
+    {
+      "id": "module:visualizer/src/main.js",
+      "type": "module",
+      "label": "visualizer/src/main.js",
+      "owner": null,
+      "criticality": 0.3932
+    },
+    {
+      "id": "module:visualizer/src/openai.js",
+      "type": "module",
+      "label": "visualizer/src/openai.js",
+      "owner": null,
+      "criticality": 0.45
+    },
+    {
+      "id": "module:visualizer/src/sessionRecorder.js",
+      "type": "module",
+      "label": "visualizer/src/sessionRecorder.js",
+      "owner": null,
+      "criticality": 0.4236
+    },
+    {
+      "id": "module:visualizer/src-tauri/build.rs",
+      "type": "module",
+      "label": "visualizer/src-tauri/build.rs",
+      "owner": null,
+      "criticality": 0.0
+    },
+    {
+      "id": "module:visualizer/src-tauri/src/lib.rs",
+      "type": "module",
+      "label": "visualizer/src-tauri/src/lib.rs",
+      "owner": null,
+      "criticality": 0.05
+    },
+    {
+      "id": "module:visualizer/src-tauri/src/main.rs",
+      "type": "module",
+      "label": "visualizer/src-tauri/src/main.rs",
+      "owner": null,
+      "criticality": 0.0
+    },
+    {
+      "id": "module:vscode-ext/esbuild.js",
+      "type": "module",
+      "label": "vscode-ext/esbuild.js",
+      "owner": null,
+      "criticality": 0.0
+    },
+    {
+      "id": "module:vscode-ext/src/extension.ts",
+      "type": "module",
+      "label": "vscode-ext/src/extension.ts",
+      "owner": null,
+      "criticality": 0.2573
+    },
+    {
+      "id": "module:vscode-ext/src/webview.ts",
+      "type": "module",
+      "label": "vscode-ext/src/webview.ts",
+      "owner": null,
+      "criticality": 0.3469
+    },
+    {
+      "id": "module:vscode-ext/src/strudel/generator.ts",
+      "type": "module",
+      "label": "vscode-ext/src/strudel/generator.ts",
+      "owner": null,
+      "criticality": 0.2707
+    },
+    {
+      "id": "module:vscode-ext/src/strudel/prompts.ts",
+      "type": "module",
+      "label": "vscode-ext/src/strudel/prompts.ts",
+      "owner": null,
+      "criticality": 0.35
+    },
+    {
+      "id": "module:vscode-ext/src/strudel/schema.ts",
+      "type": "module",
+      "label": "vscode-ext/src/strudel/schema.ts",
+      "owner": null,
+      "criticality": 0.0
+    }
+  ],
+  "edges": []
+}

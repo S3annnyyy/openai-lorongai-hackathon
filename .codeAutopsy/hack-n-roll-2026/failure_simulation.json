@@ -1,0 +1,25 @@
+{
+  "scenarios": [
+    {
+      "name": "traffic_x10",
+      "first_break_modules": [],
+      "blast_radius_nodes": [],
+      "confidence": 0.5,
+      "causal_chain": []
+    },
+    {
+      "name": "dep_update",
+      "first_break_modules": [],
+      "blast_radius_nodes": [],
+      "confidence": 0.45,
+      "causal_chain": []
+    },
+    {
+      "name": "hotspot_change",
+      "first_break_modules": [],
+      "blast_radius_nodes": [],
+      "confidence": 0.55,
+      "causal_chain": []
+    }
+  ]
+}

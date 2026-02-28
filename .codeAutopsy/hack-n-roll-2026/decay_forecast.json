@@ -1,0 +1,159 @@
+{
+  "window_months": 24,
+  "module_forecasts": [
+    {
+      "module": "visualizer/vite.config.js",
+      "decay_score": 0.215,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "low"
+    },
+    {
+      "module": "visualizer/src/audio.js",
+      "decay_score": 0.3442,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "medium"
+    },
+    {
+      "module": "visualizer/src/main.js",
+      "decay_score": 0.438,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "medium"
+    },
+    {
+      "module": "visualizer/src/openai.js",
+      "decay_score": 0.3325,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "medium"
+    },
+    {
+      "module": "visualizer/src/sessionRecorder.js",
+      "decay_score": 0.3246,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "medium"
+    },
+    {
+      "module": "visualizer/src-tauri/build.rs",
+      "decay_score": 0.1975,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "low"
+    },
+    {
+      "module": "visualizer/src-tauri/src/lib.rs",
+      "decay_score": 0.2125,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "low"
+    },
+    {
+      "module": "visualizer/src-tauri/src/main.rs",
+      "decay_score": 0.1975,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "low"
+    },
+    {
+      "module": "vscode-ext/esbuild.js",
+      "decay_score": 0.215,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "low"
+    },
+    {
+      "module": "vscode-ext/src/extension.ts",
+      "decay_score": 0.3097,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "medium"
+    },
+    {
+      "module": "vscode-ext/src/webview.ts",
+      "decay_score": 0.3716,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "medium"
+    },
+    {
+      "module": "vscode-ext/src/strudel/generator.ts",
+      "decay_score": 0.4187,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "medium"
+    },
+    {
+      "module": "vscode-ext/src/strudel/prompts.ts",
+      "decay_score": 0.355,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "medium"
+    },
+    {
+      "module": "vscode-ext/src/strudel/schema.ts",
+      "decay_score": 0.1975,
+      "drivers": [
+        "complexity",
+        "coupling",
+        "ownership_risk",
+        "test_desert"
+      ],
+      "maintainability_risk": "low"
+    }
+  ]
+}

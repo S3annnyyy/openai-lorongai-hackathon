@@ -1,10 +1,12 @@
 # Agent Prompts
 
 Use these scoped prompts to keep each agent focused and token-efficient.
+Assume input source can be either a GitHub URL clone or a local workspace path.
+Write all artifacts under `.codeAutopsy/<repo_name>/`.
 
 ## Agent 0 - Coroner
 
-"Build repository inventory, graph.json, and metrics.json. Record assumptions and confidence impacts. Do not produce remediation yet."
+"Build repository inventory plus `.codeAutopsy/<repo_name>/repo.json`, `graph.json`, and `metrics.json`. Record assumptions and confidence impacts. Do not produce remediation yet."
 
 ## Agent 1 - Attacker
 
