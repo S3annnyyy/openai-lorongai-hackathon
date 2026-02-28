@@ -360,6 +360,7 @@ main {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  display: block;
 }
 
 .mermaid-static-content svg {
@@ -371,11 +372,13 @@ main {
 }
 
 .mermaid-zoom-content {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: fit-content;
+  display: inline-block;
   transform-origin: left top;
+}
+
+.mermaid-modal-content {
+  min-width: 1px;
+  min-height: 1px;
 }
 
 .mermaid-zoom-content svg {
@@ -514,8 +517,12 @@ main {
 .mermaid-shell-modal {
   min-height: 70vh;
   height: calc(100vh - 180px);
-  overflow: hidden;
-  touch-action: none;
+  overflow: auto;
+  touch-action: auto;
+}
+
+.mermaid-modal-static {
+  min-width: 100%;
 }
 
 @media (max-width: 1080px) {
