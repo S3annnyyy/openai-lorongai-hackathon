@@ -1118,6 +1118,17 @@ def build_terraform_graph(repo_path: Path, terraform_files: list[Path]) -> dict[
     for path in terraform_files:
         rel = path.relative_to(repo_path).as_posix()
         text = _read_text(path)
+        parts = Path(rel).parts
+        bucket = "root"
+        if "modules" in parts:
+            idx = parts.index("modules")
+            if idx + 1 < len(parts):
+                bucket = f"module:{parts[idx + 1]}"
+        elif "envs" in parts:
+            idx = parts.index("envs")
+            if idx + 1 < len(parts):
+                bucket = f"env:{parts[idx + 1]}"
+
         for match in block_pattern.finditer(text):
             kind = match.group(1)
             first = match.group(2)
@@ -1144,6 +1155,7 @@ def build_terraform_graph(repo_path: Path, terraform_files: list[Path]) -> dict[
                         "kind": kind,
                         "label": label,
                         "file": rel,
+                        "scope": bucket,
                         "line": line,
                     }
                 )
@@ -1270,6 +1282,49 @@ def build_terraform_graph(repo_path: Path, terraform_files: list[Path]) -> dict[
     }
 
 
+def _terraform_display_label(label: str, kind: str, max_length: int = 36) -> str:
+    if kind in {"resource", "data"} and "." in label:
+        service, name = label.split(".", 1)
+        text = f"{service}\n{name}"
+    else:
+        text = label
+
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 1] + "..."
+
+
+def _render_text_cell(
+    cell_id: int,
+    value: str,
+    x: int,
+    y: int,
+    width: int = 260,
+    height: int = 28,
+) -> list[str]:
+    escaped = html.escape(value, quote=True)
+    return [
+        f'        <mxCell id="{cell_id}" value="{escaped}" '
+        'style="text;align=center;verticalAlign=middle;whiteSpace=wrap;html=1;'
+        'strokeColor=none;fillColor=none;fontSize=12;fontStyle=1;" '
+        'vertex="1" parent="1">',
+        f'          <mxGeometry x="{x}" y="{y}" width="{width}" height="{height}" as="geometry" />',
+        "        </mxCell>",
+    ]
+
+
+def _scope_groups(nodes: list[dict[str, Any]], kind: str) -> list[tuple[str, list[dict[str, Any]]]]:
+    groups = {}
+    order = []
+    for node in [item for item in nodes if item.get("kind") == kind]:
+        scope = node.get("scope") or "root"
+        if scope not in groups:
+            groups[scope] = []
+            order.append(scope)
+        groups[scope].append(node)
+    return [(scope, sorted(groups[scope], key=lambda item: item.get("label", ""))) for scope in order]
+
+
 def render_terraform_drawio(terraform_graph: dict[str, Any], repo_name: str) -> str:
     nodes = terraform_graph.get("nodes", [])
     edges = terraform_graph.get("edges", [])
@@ -1282,56 +1337,132 @@ def render_terraform_drawio(terraform_graph: dict[str, Any], repo_name: str) -> 
         "resource": "rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;",
     }
     risk_scores = {"provider": 0.35, "module": 0.5, "data": 0.45, "resource": 0.7}
+    edge_styles = {
+        "depends_on": "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b91c1c;",
+        "references": "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;",
+        "provider_binding": "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6d28d9;dashed=1;",
+    }
+    section_titles = {
+        "provider": "Providers",
+        "module": "Modules",
+        "data": "Data Sources",
+        "resource": "Resources",
+    }
 
-    columns = {"provider": 40, "module": 350, "data": 660, "resource": 970}
-    row_height = 110
-    row_state = {key: 0 for key in columns}
-
-    ordered_nodes = sorted(
-        nodes,
-        key=lambda item: (
-            {"provider": 0, "module": 1, "data": 2, "resource": 3}.get(item.get("kind", "resource"), 9),
-            item.get("label", ""),
-        ),
-    )
-
-    cell_ids: dict[str, str] = {}
     lines = [
         '<mxfile host="app.diagrams.net" type="device">',
         f'  <diagram id="terraform-iac" name="Terraform IaC - {html.escape(repo_name, quote=True)}">',
-        '    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400" math="0" shadow="0">',
+        '    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" math="0" shadow="0">',
         "      <root>",
         '        <mxCell id="0" />',
         '        <mxCell id="1" parent="0" />',
     ]
 
     next_id = 2
-    if not ordered_nodes:
+    if not nodes:
         lines.append(
             '        <mxCell id="2" value="Terraform files detected&#xa;No provider/resource/module/data blocks found" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;" vertex="1" parent="1">'
         )
         lines.append('          <mxGeometry x="120" y="80" width="520" height="80" as="geometry" />')
         lines.append("        </mxCell>")
-        next_id = 3
+        lines.extend([
+            "      </root>",
+            "    </mxGraphModel>",
+            "  </diagram>",
+            "</mxfile>",
+            f"<!-- generated_at: {generated_at} -->",
+        ])
+        return "\n".join(lines) + "\n"
 
-    for node in ordered_nodes:
-        kind = node.get("kind", "resource")
-        x = columns.get(kind, 970)
-        y = 50 + row_state.get(kind, 0) * row_height
-        row_state[kind] = row_state.get(kind, 0) + 1
+    row_height = 88
+    nodes_per_row = 24
+    column_width = 320
+    max_x = 2000
+    max_y = 140
 
-        risk = risk_scores.get(kind, 0.5)
-        value = f"{node.get('label', node.get('id', 'node'))}\n[{kind}]\nrisk:{risk:.2f}"
-        escaped_value = html.escape(value, quote=True).replace("\n", "&#xa;")
-        cell_id = str(next_id)
-        next_id += 1
-        cell_ids[node["id"]] = cell_id
+    lane_x = {
+        "provider": 40,
+        "module": 320,
+        "data": 600,
+        "resource": 880,
+    }
 
-        lines.append(
-            f'        <mxCell id="{cell_id}" value="{escaped_value}" style="{styles.get(kind, styles["resource"])}" vertex="1" parent="1">'
-        )
-        lines.append(f'          <mxGeometry x="{x}" y="{y}" width="260" height="72" as="geometry" />')
-        lines.append("        </mxCell>")
+    ordered_kinds = ["provider", "module", "data", "resource"]
+    cell_ids: dict[str, str] = {}
+
+    for kind in ordered_kinds:
+        kind_nodes = [node for node in nodes if node.get("kind") == kind]
+        if not kind_nodes:
+            continue
+
+        if kind == "resource":
+            title_x = lane_x[kind]
+            for row in _render_text_cell(next_id, section_titles[kind], title_x, 8, width=260, height=24):
+                lines.append(row)
+            next_id += 1
+
+            scope_col = 0
+            for scope, scope_nodes in _scope_groups(kind_nodes, "resource"):
+                scope_nodes_sorted = sorted(scope_nodes, key=lambda item: item.get("label", ""))
+                display_scope = scope.replace("module:", "module:").replace("env:", "env:")
+                for chunk_start in range(0, len(scope_nodes_sorted), nodes_per_row):
+                    chunk = scope_nodes_sorted[chunk_start:chunk_start + nodes_per_row]
+                    chunk_x = lane_x[kind] + scope_col * column_width
+                    section_label = f"{display_scope} ({len(scope_nodes_sorted)})"
+                    if chunk_start == 0:
+                        for row in _render_text_cell(
+                            next_id,
+                            section_label,
+                            chunk_x,
+                            36,
+                            width=260,
+                            height=22,
+                        ):
+                            lines.append(row)
+                        next_id += 1
+
+                    for offset, node in enumerate(chunk):
+                        y = 66 + offset * row_height
+                        risk = risk_scores.get(kind, 0.5)
+                        value = (
+                            f"{_terraform_display_label(node.get('label', node.get('id', 'node')), kind)}\n"
+                            f"[{kind}] risk:{risk:.2f}"
+                        )
+                        escaped_value = html.escape(value, quote=True).replace("\n", "&#xa;")
+                        cell_id = str(next_id)
+                        next_id += 1
+                        cell_ids[node["id"]] = cell_id
+                        lines.append(
+                            f'        <mxCell id="{cell_id}" value="{escaped_value}" style="{styles.get(kind, styles["resource"])}" vertex="1" parent="1">'
+                        )
+                        lines.append(
+                            f'          <mxGeometry x="{chunk_x}" y="{y}" width="250" height="72" as="geometry" />'
+                        )
+                        lines.append("        </mxCell>")
+                        max_x = max(max_x, chunk_x + 250)
+                        max_y = max(max_y, y + 72 + 20)
+
+                    scope_col += 1
+        else:
+            title_x = lane_x[kind]
+            for row in _render_text_cell(next_id, section_titles[kind], title_x, 8, width=260, height=24):
+                lines.append(row)
+            next_id += 1
+            for offset, node in enumerate(sorted(kind_nodes, key=lambda item: item.get("label", ""))):
+                y = 40 + offset * row_height
+                risk = risk_scores.get(kind, 0.5)
+                value = f"{_terraform_display_label(node.get('label', node.get('id', 'node')), kind)}\n[{kind}] risk:{risk:.2f}"
+                escaped_value = html.escape(value, quote=True).replace("\n", "&#xa;")
+                cell_id = str(next_id)
+                next_id += 1
+                cell_ids[node["id"]] = cell_id
+                lines.append(
+                    f'        <mxCell id="{cell_id}" value="{escaped_value}" style="{styles.get(kind, styles["resource"])}" vertex="1" parent="1">'
+                )
+                lines.append(f'          <mxGeometry x="{title_x}" y="{y}" width="250" height="72" as="geometry" />')
+                lines.append("        </mxCell>")
+                max_x = max(max_x, title_x + 250)
+                max_y = max(max_y, y + 72 + 20)
 
     for edge in edges:
         source = cell_ids.get(edge.get("from", ""))
@@ -1342,15 +1473,14 @@ def render_terraform_drawio(terraform_graph: dict[str, Any], repo_name: str) -> 
         edge_id = str(next_id)
         next_id += 1
         value = html.escape(edge.get("type", "link"), quote=True)
-        style = (
-            "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;"
-            "html=1;endArrow=block;endFill=1;strokeColor=#64748b;"
-        )
+        edge_style = edge_styles.get(edge.get("type", "references"), edge_styles["references"])
         lines.append(
-            f'        <mxCell id="{edge_id}" value="{value}" style="{style}" edge="1" parent="1" source="{source}" target="{target}">'
+            f'        <mxCell id="{edge_id}" value="{value}" style="{edge_style}" edge="1" parent="1" source="{source}" target="{target}">'
         )
-        lines.append('          <mxGeometry relative="1" as="geometry" />')
+        lines.append("          <mxGeometry relative=\"1\" as=\"geometry\" />")
         lines.append("        </mxCell>")
+
+    lines[3] = f'    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="{max(2200, max_x + 300)}" pageHeight="{max(1200, max_y + 200)}" math="0" shadow="0">'
 
     lines.extend(
         [
@@ -1905,3 +2035,4 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         "start_here": start_here,
         "warnings": parser_errors,
     }
+
