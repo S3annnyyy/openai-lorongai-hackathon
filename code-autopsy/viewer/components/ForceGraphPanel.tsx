@@ -1,5 +1,6 @@
 "use client";
 
+import { forceCollide } from "d3-force";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef } from "react";
 import { GraphEdge, GraphNode } from "../lib/types";
@@ -103,9 +104,24 @@ export default function ForceGraphPanel({
     const fg = fgRef.current;
     if (!fg) return;
 
-    fg.d3Force("charge")?.strength(-34);
-    fg.d3Force("link")?.distance(62).strength(0.95);
-    fg.d3Force("collision", null);
+    const nodeCount = graphData.nodes.length;
+    const linkCount = graphData.links.length;
+    const density = linkCount / Math.max(nodeCount, 1);
+    const chargeStrength = -Math.min(260, 70 + nodeCount * 0.24 + density * 12);
+    const linkDistance = Math.min(130, 72 + Math.sqrt(nodeCount) * 1.8 + density * 4);
+    const linkStrength = Math.max(0.25, Math.min(0.75, 0.7 - density * 0.08));
+
+    fg.d3Force("charge")?.strength(chargeStrength);
+    fg.d3Force("link")?.distance(linkDistance).strength(linkStrength);
+    fg.d3Force(
+      "collision",
+      forceCollide((node: any) => {
+        const label = compressLabel(node.label || node.id || "");
+        return 8 + Math.min(8, label.length * 0.22);
+      })
+        .strength(0.95)
+        .iterations(nodeCount > 400 ? 2 : 1)
+    );
     fg.d3ReheatSimulation();
   }, [graphData.nodes.length, graphData.links.length, focusSelection, edgeType, normalized]);
 
@@ -139,16 +155,19 @@ export default function ForceGraphPanel({
         const isSelected = selectedNodeId === node.id;
         const isNeighbor = neighborIds.has(node.id);
         const baseColor = defaultNodeColor(node as GraphNode);
+        const showLabel = globalScale >= 1.15 || isSelected || isNeighbor || node.criticality >= 0.75;
         ctx.fillStyle = isSelected ? "#1d4ed8" : baseColor;
         ctx.beginPath();
         ctx.arc(node.x, node.y, isSelected ? 7 : isNeighbor ? 5.3 : 4.5, 0, 2 * Math.PI, false);
         ctx.fill();
 
-        ctx.lineWidth = 3 / globalScale;
-        ctx.strokeStyle = "rgba(248, 250, 252, 0.96)";
-        ctx.strokeText(label, node.x + 8, node.y + 1.5);
-        ctx.fillStyle = isSelected ? "#1e293b" : "#0f172a";
-        ctx.fillText(label, node.x + 8, node.y + 1.5);
+        if (showLabel) {
+          ctx.lineWidth = 3 / globalScale;
+          ctx.strokeStyle = "rgba(248, 250, 252, 0.96)";
+          ctx.strokeText(label, node.x + 8, node.y + 1.5);
+          ctx.fillStyle = isSelected ? "#1e293b" : "#0f172a";
+          ctx.fillText(label, node.x + 8, node.y + 1.5);
+        }
       }}
       linkDirectionalArrowLength={3.5}
       linkDirectionalArrowRelPos={1}
@@ -174,11 +193,11 @@ export default function ForceGraphPanel({
       }}
       onNodeClick={(node: any) => onNodeSelect(node.id)}
       onBackgroundClick={() => onNodeSelect(null)}
-      d3AlphaDecay={0.028}
-      d3VelocityDecay={0.36}
+      d3AlphaDecay={0.02}
+      d3VelocityDecay={0.28}
       minZoom={0.52}
       maxZoom={4}
-      cooldownTicks={180}
+      cooldownTicks={260}
     />
   );
 }
