@@ -14,6 +14,7 @@ Choose one input mode:
 - Local workspace mode: run `python scripts/code_autopsy.py .` from the repository root in VS Code/Codex.
 
 Both modes write outputs to `code-autopsy/.autopsy-outputs/<repo_name>/`.
+GitHub URL mode does not require manual cloning; the CLI fetches source directly.
 
 1. Build baseline artifacts:
 - `repo.json`
@@ -45,8 +46,8 @@ Use `scripts/code_autopsy.py` as the default entrypoint for this skill.
 CLI contract:
 - positional source: GitHub URL or local repository path.
 - `--output`: output base path (default `code-autopsy/.autopsy-outputs`).
-- `--viewer/--no-viewer`: auto install/start viewer frontend after output.
-- `--open-viewer/--no-open-viewer`: auto-open browser dashboard URL.
+- `--viewer/--no-viewer`: auto install/start viewer frontend after output (default: enabled).
+- `--open-viewer/--no-open-viewer`: auto-open browser dashboard URL (default: enabled).
 
 Examples:
 - `python scripts/code_autopsy.py https://github.com/org/repo`

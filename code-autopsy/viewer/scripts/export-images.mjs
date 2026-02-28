@@ -123,7 +123,9 @@ async function main() {
   const page = await browser.newPage();
 
   const map = [
-    ['architecture', dashboard?.diagrams?.architecture || 'flowchart LR\nA-->B\n', 'architecture.png'],
+    ['architecture-services', dashboard?.diagrams?.architecture_services || dashboard?.diagrams?.architecture || 'flowchart LR\nA-->B\n', 'architecture.png'],
+    ['architecture-code', dashboard?.diagrams?.architecture_code || dashboard?.diagrams?.architecture_services || dashboard?.diagrams?.architecture || 'flowchart LR\nA-->B\n', 'architecture-code.png'],
+    ['architecture-iac', dashboard?.diagrams?.architecture_iac || 'flowchart LR\nA-->B\n', 'architecture-iac.png'],
     ['er', dashboard?.diagrams?.er || 'erDiagram\n', 'er.png'],
     ['call-graph', dashboard?.diagrams?.call_graph || 'flowchart LR\nA-->B\n', 'call-graph.png'],
     ['dependency', dashboard?.diagrams?.dependencies || 'flowchart LR\nA-->B\n', 'dependency.png']
