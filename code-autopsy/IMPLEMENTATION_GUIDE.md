@@ -10,8 +10,7 @@ From this repository root:
 bash code-autopsy/scripts/install_skill_local.sh
 ```
 
-This links the skill to:
-- `~/.codex/skills/code-autopsy` (or `$CODEX_HOME/skills/code-autopsy`).
+This links the skill to `~/.codex/skills/code-autopsy` (or `$CODEX_HOME/skills/code-autopsy`).
 
 ### Option B: install from GitHub (for other users)
 
@@ -23,23 +22,27 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-installer/scripts/inst
 
 After installing, restart Codex so `$code-autopsy` is available in new sessions.
 
-## Main behavior
+## CLI behavior (current on `main`)
 
-`code-autopsy/scripts/code_autopsy.py` now accepts:
-- a local repository path
-- a GitHub URL
+`code-autopsy/scripts/code_autopsy.py` accepts:
+- local repository path
+- GitHub URL (`https://github.com/<owner>/<repo>` and `.../tree/<ref>` forms)
 
 For GitHub URLs:
 - no manual clone is required
-- CLI fetches a source archive directly from GitHub by default
-- only if archive fetch fails, it falls back to shallow `git clone`
+- the CLI first tries downloading a GitHub source archive
+- if archive download fails, it falls back to shallow `git clone --depth 1`
 
-Artifacts are generated under:
+Default output root is:
 - `code-autopsy/.autopsy-outputs/<repo_name>/`
 
-The viewer reads this output through API routes:
-- `viewer/app/api/autopsy/route.ts` (repo list)
-- `viewer/app/api/autopsy/[repo]/route.ts` (repo dashboard payload)
+Notes:
+- `--output` values that are not absolute paths are resolved relative to `code-autopsy/` (skill root), not the shell CWD.
+- temporary GitHub source checkouts live under `code-autopsy/.autopsy-outputs/_sources/` unless `--keep-clone` is omitted (default cleanup).
+
+The viewer reads output through:
+- `code-autopsy/viewer/app/api/autopsy/route.ts` (repo list)
+- `code-autopsy/viewer/app/api/autopsy/[repo]/route.ts` (repo dashboard payload)
 
 ## Quick run
 
@@ -49,67 +52,79 @@ From workspace root:
 python3 code-autopsy/scripts/code_autopsy.py .
 ```
 
-Or GitHub URL mode:
+GitHub URL mode:
 
 ```bash
 python3 code-autopsy/scripts/code_autopsy.py https://github.com/org/repo
 ```
 
-## Viewer behavior (main-default)
+Generation only (skip viewer install/start/browser open):
 
-By default, CLI will:
+```bash
+python3 code-autopsy/scripts/code_autopsy.py <source> --no-viewer --no-open-viewer
+```
+
+## Viewer behavior (default)
+
+With default flags, CLI will:
 - run `npm install` in `code-autopsy/viewer`
-- start `npm run dev` on `--viewer-port` (default `3000`) if not already running
+- start `npm run dev -- --port <viewer-port>` if that port is not already in use
+- set `AUTOPSY_OUTPUT_ROOT` for viewer API routes
 - open `http://localhost:<port>/?repo=<repo_name>`
 
-This means viewer auto-launch is enabled by default in main flow.
+Defaults:
+- `--viewer` enabled
+- `--open-viewer` enabled
+- `--viewer-port 3000`
 
-Disable auto viewer launch with:
+Disable with:
 - `--no-viewer`
 - `--no-open-viewer`
 
 ## Important flags
 
-- `--output .autopsy-outputs` (default, relative to `code-autopsy/`)
+- `--output .autopsy-outputs` (resolved to `code-autopsy/.autopsy-outputs`)
 - `--viewer/--no-viewer`
 - `--open-viewer/--no-open-viewer`
 - `--viewer-port 3000`
-- `--watch` (local paths only)
+- `--watch` (local paths only; GitHub URLs are rejected)
+- `--watch-interval 2.0`
 - `--export-images`
-- `--keep-clone` (keep temporary downloaded/cloned GitHub source)
+- `--keep-clone` (keep downloaded/cloned GitHub temp source)
 - `--lang-hints ts,python`
 - `--max-files 1200`
 
-## Output contract (current)
+## Output contract (current X-Ray MVP)
 
-Per repo output root:
+Per repo output root (`code-autopsy/.autopsy-outputs/<repo_name>/`):
 - `repo.json`
 - `graph.json`
 - `metrics.json`
 - `dashboard_state.json`
+- `index.md`
 - `onboarding.md`
+- `repo-summary.md`
 - `top-files.md`
 - `case_file.md`
-- `repo-summary.md`
-- `architecture.mmd` (legacy alias; currently services-level)
-- `architecture-services.mmd` (high-level service/microservices architecture)
-- `architecture-code.mmd` (code architecture)
-- `architecture-iac.mmd` (IaC architecture)
+- `architecture-services.mmd`
+- `architecture-code.mmd`
+- `architecture-iac.mmd`
+- `architecture.mmd` (legacy alias to services-level architecture)
 - `er.mmd`
 - `er.dbml`
 - `call-graph.mmd`
 - `dependencies.mmd`
-- `artifacts/*.json` (includes `iac.json`)
-- `images/*.png` (when `--export-images` succeeds)
+- `artifacts/*.json` (`entrypoints`, `routes`, `models`, `imports`, `calls`, `entities`, `iac`, `cycles`, `hotspots`, `glossary`)
+- `diagrams/*.mmd` (duplicated copies for architecture/ER/call/dependencies)
+- `images/*.png` (only when `--export-images` succeeds)
 
 ## Diagram levels
 
-You now get 3 architecture perspectives:
-- `Architecture (Services)`: high-level system design / microservices-style view (default in viewer)
-- `Architecture (Code)`: deeper code-level architectural relationships
-- `Architecture (IaC)`: infra/IaC-derived architecture view (Terraform/K8s/Compose/CFN/Bicep when detected)
+- `Architecture (Services)`: high-level service/system view (default architecture view in viewer)
+- `Architecture (Code)`: code-layer relationships
+- `Architecture (IaC)`: infrastructure/IaC-layer view from Terraform/Kubernetes/Compose/CloudFormation/Bicep-like files
 
-## Testing your two repos
+## Smoke test repos
 
 ```bash
 mkdir -p /Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/demo-repos
@@ -123,12 +138,6 @@ python3 /Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/code-autop
   https://github.com/vintasoftware/nextjs-fastapi-template
 ```
 
-If you only want generation (no viewer auto-run):
-
-```bash
-python3 code-autopsy/scripts/code_autopsy.py <source> --no-viewer --no-open-viewer
-```
-
 ## Manual viewer run (optional)
 
 ```bash
@@ -136,14 +145,13 @@ cd code-autopsy/viewer
 AUTOPSY_OUTPUT_ROOT=/Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/code-autopsy/.autopsy-outputs npm run dev -- --port 3000
 ```
 
-Open:
-- `http://localhost:3000/?repo=<repo_name>`
+Open `http://localhost:3000/?repo=<repo_name>`.
 
 ## Troubleshooting
 
-- `No autopsy output found`: ensure artifacts exist under `code-autopsy/.autopsy-outputs/<repo>/`.
-- Viewer 404 for repo dashboard: verify `dashboard_state.json` exists in that repo output folder.
-- Mermaid parse errors: rerun CLI with latest backend so sanitized labels are regenerated.
-- Graph appears disconnected: ensure output is regenerated after code changes; viewer reads API-backed dashboard state.
-- `PNG export skipped`: install Playwright browser in viewer:
+- `No autopsy output found`: verify artifacts exist at `code-autopsy/.autopsy-outputs/<repo>/`.
+- viewer repo 404: verify `<repo>/dashboard_state.json` exists.
+- `Error: watch mode is only supported for local repository paths.`: remove `--watch` when source is a GitHub URL.
+- `PNG export skipped`: install Playwright browser:
   - `cd code-autopsy/viewer && npx playwright install chromium`
+- Mermaid parse issues: regenerate artifacts with latest backend code so label sanitization is refreshed.
