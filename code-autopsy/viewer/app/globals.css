@@ -55,6 +55,14 @@ main {
   pointer-events: none;
 }
 
+.dashboard-repo-selection {
+  display: flex;
+  align-items: center;  
+  justify-content: left; 
+  gap: 16px;             
+  flex-wrap: wrap;      
+}
+
 .dashboard-title {
   margin: 0;
   font-size: 2.25rem;
