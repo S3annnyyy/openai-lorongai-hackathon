@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 SUPPORTED_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+IAC_EXTENSIONS = {".tf", ".hcl", ".tfvars", ".bicep", ".yaml", ".yml", ".json"}
+IAC_YAML_EXTENSIONS = {".yaml", ".yml"}
 DEFAULT_IGNORE_DIRS = {
     ".git",
     "node_modules",
@@ -24,9 +26,11 @@ DEFAULT_IGNORE_DIRS = {
     "build",
     "coverage",
     ".next",
+    "_next",
     ".turbo",
     ".cache",
     "__pycache__",
+    "viewer-static",
 }
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
@@ -48,6 +52,30 @@ SQL_SCALARS = {
     "date",
     "json",
     "jsonb",
+}
+NON_SIGNAL_CALLEES = {
+    "get",
+    "post",
+    "put",
+    "patch",
+    "delete",
+    "options",
+    "head",
+    "json",
+    "var",
+    "async",
+}
+API_FRAMEWORKS = {"FastAPI", "Express", "Django", "Flask", "NestJS", "Fastify"}
+IAC_PROVIDER_ALIASES = {
+    "aws": "AWS",
+    "google": "GCP",
+    "gcp": "GCP",
+    "azurerm": "Azure",
+    "azure": "Azure",
+    "kubernetes": "Kubernetes",
+    "helm": "Helm",
+    "docker": "Docker",
+    "pulumi": "Pulumi",
 }
 TERRAFORM_REF_IGNORES = {"var", "local", "path", "count", "each", "self", "terraform"}
 
@@ -92,7 +120,36 @@ def _should_skip(path: Path, repo_path: Path) -> bool:
         return True
     if rel_path.endswith(".min.js"):
         return True
+    if rel_path.startswith("docs/code-autopsy/") or "/docs/code-autopsy/" in rel_path:
+        return True
+    if rel_path.startswith("viewer-static/") or "/viewer-static/" in rel_path:
+        return True
+    if rel_path.startswith("_next/") or "/_next/" in rel_path:
+        return True
     if "/docs/site/" in rel_path:
+        return True
+    return False
+
+
+def _is_iac_candidate(path: Path, repo_path: Path) -> bool:
+    if path.suffix.lower() not in IAC_EXTENSIONS:
+        return False
+    if _should_skip(path, repo_path):
+        return False
+
+    rel = path.relative_to(repo_path).as_posix().lower()
+    name = path.name.lower()
+    suffix = path.suffix.lower()
+
+    if suffix in {".tf", ".hcl", ".tfvars", ".bicep"}:
+        return True
+    if name in {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", "pulumi.yaml", "pulumi.yml"}:
+        return True
+    if any(token in rel for token in ("k8s/", "kubernetes/", "/manifests/", "/helm/", "/charts/")) and suffix in IAC_YAML_EXTENSIONS:
+        return True
+    if suffix in IAC_YAML_EXTENSIONS and any(token in rel for token in ("cloudformation", "cfn", "sam", "template", "infra")):
+        return True
+    if suffix == ".json" and any(token in rel for token in ("cloudformation", "cfn", "template")):
         return True
     return False
 
@@ -575,6 +632,10 @@ def build_call_edges(parsed_files: list[dict[str, Any]]) -> tuple[list[dict[str,
             callee = call.get("callee")
             if not callee:
                 continue
+            if callee.lower() in NON_SIGNAL_CALLEES:
+                # Skip noisy call tokens that are not meaningful cross-file dependencies.
+                continue
+            caller_name = call.get("caller", "<module>")
             targets = function_index.get(callee, [])
             if not targets:
                 module_calls.append(
@@ -582,6 +643,16 @@ def build_call_edges(parsed_files: list[dict[str, Any]]) -> tuple[list[dict[str,
                         "from": source,
                         "to": f"external_fn:{callee}",
                         "type": "calls",
+                        "line": call.get("line", 0),
+                        "confidence": "low",
+                        "reason": "callee-not-indexed",
+                    }
+                )
+                function_calls.append(
+                    {
+                        "from": f"{source}::{caller_name}",
+                        "to": f"external::{callee}",
+                        "callee": callee,
                         "line": call.get("line", 0),
                         "confidence": "low",
                         "reason": "callee-not-indexed",
@@ -595,6 +666,12 @@ def build_call_edges(parsed_files: list[dict[str, Any]]) -> tuple[list[dict[str,
             if len(targets) > 1:
                 confidence = "medium"
                 reason = "multiple-callee-candidates"
+            if source == target_file and caller_name == "<module>" and reason in {
+                "regex-callsite",
+                "function-index",
+            }:
+                # Avoid self-loop noise from regex-level JS call extraction.
+                continue
 
             module_calls.append(
                 {
@@ -608,7 +685,7 @@ def build_call_edges(parsed_files: list[dict[str, Any]]) -> tuple[list[dict[str,
             )
             function_calls.append(
                 {
-                    "from": f"{source}::{call.get('caller', '<module>')}",
+                    "from": f"{source}::{caller_name}",
                     "to": f"{target_file}::{target_fn}",
                     "callee": callee,
                     "line": call.get("line", 0),
@@ -724,6 +801,265 @@ def parse_sql_entities(repo_path: Path) -> tuple[list[dict[str, Any]], list[dict
             )
 
     return entities, relationships
+
+
+def _normalize_iac_provider(raw_provider: str) -> str:
+    token = raw_provider.strip().lower()
+    return IAC_PROVIDER_ALIASES.get(token, token.upper() if len(token) <= 5 else token.title())
+
+
+def _classify_iac_layer(kind: str) -> str:
+    token = kind.lower()
+    if any(
+        key in token
+        for key in (
+            "vpc",
+            "subnet",
+            "network",
+            "route",
+            "gateway",
+            "ingress",
+            "loadbalancer",
+            "load_balancer",
+            "dns",
+            "cdn",
+            "nat",
+            "firewall",
+        )
+    ):
+        return "network"
+    if any(
+        key in token
+        for key in (
+            "iam",
+            "policy",
+            "role",
+            "rbac",
+            "serviceaccount",
+            "securitygroup",
+            "security_group",
+            "secret",
+            "kms",
+            "keyvault",
+            "networkpolicy",
+        )
+    ):
+        return "security"
+    if any(
+        key in token
+        for key in (
+            "db",
+            "database",
+            "rds",
+            "sql",
+            "dynamodb",
+            "redis",
+            "cache",
+            "bucket",
+            "storage",
+            "s3",
+            "persistentvolume",
+            "persistentvolumeclaim",
+            "spanner",
+        )
+    ):
+        return "data"
+    if any(
+        key in token
+        for key in (
+            "deployment",
+            "statefulset",
+            "daemonset",
+            "job",
+            "cronjob",
+            "pod",
+            "service",
+            "container",
+            "instance",
+            "lambda",
+            "function",
+            "ecs",
+            "eks",
+            "gke",
+            "vm",
+            "compute",
+            "cloudrun",
+            "appservice",
+        )
+    ):
+        return "compute"
+    if any(key in token for key in ("monitor", "alert", "log", "cloudwatch", "prometheus", "grafana", "insight")):
+        return "observability"
+    return "platform"
+
+
+def _looks_like_compose(name: str, text: str) -> bool:
+    if name in {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}:
+        return True
+    return bool(re.search(r"(?mi)^\s*services\s*:\s*$", text))
+
+
+def _looks_like_k8s_yaml(text: str) -> bool:
+    return bool(re.search(r"(?mi)^\s*apiVersion\s*:\s*\S+", text) and re.search(r"(?mi)^\s*kind\s*:\s*\S+", text))
+
+
+def _looks_like_cloudformation(text: str) -> bool:
+    return bool("awstemplateformatversion" in text.lower() or re.search(r"(?mi)^\s*resources\s*:\s*$", text))
+
+
+def parse_iac_artifacts(repo_path: Path) -> dict[str, Any]:
+    files: list[str] = []
+    resources: list[dict[str, Any]] = []
+    providers: Counter = Counter()
+    source_types: Counter = Counter()
+    errors: list[str] = []
+
+    candidates = [path for path in sorted(repo_path.rglob("*")) if path.is_file() and _is_iac_candidate(path, repo_path)]
+    for path in candidates[:500]:
+        rel = path.relative_to(repo_path).as_posix()
+        suffix = path.suffix.lower()
+        name = path.name.lower()
+        text = _read_text(path)
+        if not text:
+            continue
+        files.append(rel)
+
+        try:
+            if suffix in {".tf", ".hcl", ".tfvars"}:
+                source_types["terraform"] += 1
+                for raw in re.findall(r'provider\s+"([^"]+)"', text):
+                    providers[_normalize_iac_provider(raw)] += 1
+                for resource_type, resource_name in re.findall(r'resource\s+"([^"]+)"\s+"([^"]+)"', text):
+                    provider_hint = resource_type.split("_", 1)[0]
+                    providers[_normalize_iac_provider(provider_hint)] += 1
+                    resources.append(
+                        {
+                            "name": resource_name,
+                            "kind": resource_type,
+                            "layer": _classify_iac_layer(resource_type),
+                            "provider": _normalize_iac_provider(provider_hint),
+                            "source": rel,
+                            "confidence": "high",
+                        }
+                    )
+                for module_name in re.findall(r'module\s+"([^"]+)"', text):
+                    resources.append(
+                        {
+                            "name": module_name,
+                            "kind": "terraform_module",
+                            "layer": "platform",
+                            "provider": "Terraform",
+                            "source": rel,
+                            "confidence": "medium",
+                        }
+                    )
+                    providers["Terraform"] += 1
+                continue
+
+            if suffix == ".bicep":
+                source_types["bicep"] += 1
+                providers["Azure"] += 1
+                for name_token, type_token in re.findall(r"resource\s+(\w+)\s+['\"]([^'\"]+)['\"]", text):
+                    kind = type_token.split("@", 1)[0]
+                    resources.append(
+                        {
+                            "name": name_token,
+                            "kind": kind,
+                            "layer": _classify_iac_layer(kind),
+                            "provider": "Azure",
+                            "source": rel,
+                            "confidence": "medium",
+                        }
+                    )
+                continue
+
+            if _looks_like_compose(name, text):
+                source_types["compose"] += 1
+                providers["Docker"] += 1
+                block = re.search(r"(?ms)^\s*services:\s*\n(.*?)(?:^\S|\Z)", text)
+                if block:
+                    for service_name in re.findall(r"(?m)^\s{2}([A-Za-z0-9._-]+)\s*:\s*$", block.group(1)):
+                        resources.append(
+                            {
+                                "name": service_name,
+                                "kind": "compose_service",
+                                "layer": "compute",
+                                "provider": "Docker",
+                                "source": rel,
+                                "confidence": "medium",
+                            }
+                        )
+                continue
+
+            if suffix in IAC_YAML_EXTENSIONS and _looks_like_k8s_yaml(text):
+                source_types["kubernetes"] += 1
+                providers["Kubernetes"] += 1
+                docs = re.split(r"\n---\s*\n", text)
+                for doc in docs:
+                    kind_match = re.search(r"(?mi)^\s*kind\s*:\s*([A-Za-z0-9._-]+)", doc)
+                    if not kind_match:
+                        continue
+                    kind = kind_match.group(1)
+                    name_match = re.search(r"(?mi)^\s*name\s*:\s*([A-Za-z0-9._-]+)", doc)
+                    name_token = name_match.group(1) if name_match else kind.lower()
+                    resources.append(
+                        {
+                            "name": name_token,
+                            "kind": kind,
+                            "layer": _classify_iac_layer(kind),
+                            "provider": "Kubernetes",
+                            "source": rel,
+                            "confidence": "high",
+                        }
+                    )
+                continue
+
+            if suffix in IAC_YAML_EXTENSIONS.union({".json"}) and _looks_like_cloudformation(text):
+                source_types["cloudformation"] += 1
+                providers["AWS"] += 1
+                found_types = re.findall(r"(?mi)^\s*Type\s*:\s*([A-Za-z0-9:._/-]+)\s*$", text)
+                if not found_types:
+                    found_types = ["AWS::CloudFormation::Stack"]
+                for index, resource_type in enumerate(found_types, start=1):
+                    resources.append(
+                        {
+                            "name": f"resource_{index}",
+                            "kind": resource_type,
+                            "layer": _classify_iac_layer(resource_type),
+                            "provider": "AWS",
+                            "source": rel,
+                            "confidence": "medium",
+                        }
+                    )
+                continue
+
+            if name in {"pulumi.yaml", "pulumi.yml"}:
+                source_types["pulumi"] += 1
+                providers["Pulumi"] += 1
+                resources.append(
+                    {
+                        "name": "pulumi_stack",
+                        "kind": "pulumi_project",
+                        "layer": "platform",
+                        "provider": "Pulumi",
+                        "source": rel,
+                        "confidence": "medium",
+                    }
+                )
+                continue
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{rel}: {exc}")
+
+    layer_counts = Counter(item["layer"] for item in resources)
+
+    return {
+        "files": sorted(set(files)),
+        "resources": resources[:500],
+        "providers": dict(sorted(providers.items())),
+        "source_types": dict(sorted(source_types.items())),
+        "layer_counts": dict(sorted(layer_counts.items())),
+        "errors": errors[:100],
+    }
 
 
 def merge_entities_and_relationships(
@@ -1533,46 +1869,407 @@ def build_core_leaf_tags(module_metrics: list[dict[str, Any]]) -> dict[str, str]
     return tags
 
 
+def _classify_arch_layer(rel_path: str) -> str:
+    lower = rel_path.lower()
+    if (
+        lower.startswith("api/")
+        or "/api/" in lower
+        or lower.endswith("/route.ts")
+        or lower.endswith("/route.js")
+        or lower.endswith("/route.py")
+    ):
+        return "api"
+    if lower.startswith(("app/", "src/app/", "pages/", "src/pages/", "components/", "src/components/")):
+        return "web"
+    if any(token in lower for token in ("/worker", "worker/", "/jobs", "/job", "/queue", "/queues", "/cron")):
+        return "worker"
+    if "config" in lower:
+        return "config"
+    return "core"
+
+
 def render_architecture_mermaid(
-    nodes: list[dict[str, Any]],
+    parsed_files: list[dict[str, Any]],
     edges: list[dict[str, Any]],
+    frameworks: list[str],
+    routes: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
     entrypoints: list[str],
-    core_leaf_tags: dict[str, str],
 ) -> str:
     lines = ["flowchart LR"]
-    entrypoint_ids = {f"file:{item}" for item in entrypoints}
+    module_layers: dict[str, str] = {}
+    layer_counts = Counter()
+    for item in parsed_files:
+        module_id = f"file:{item['path']}"
+        layer = _classify_arch_layer(item["path"])
+        module_layers[module_id] = layer
+        if layer != "config":
+            layer_counts[layer] += 1
 
-    for node in nodes:
-        label = node["label"].replace('"', "'")
-        node_id = _sanitize(node["id"])
-        lines.append(f"    {node_id}[\"{_short(label, 44)}\"]")
+    if "Next.js" in frameworks:
+        layer_counts["web"] = max(1, layer_counts["web"])
+    if routes or any(fw in API_FRAMEWORKS for fw in frameworks):
+        layer_counts["api"] = max(1, layer_counts["api"])
+    if entrypoints and layer_counts["core"] == 0:
+        layer_counts["core"] = 1
 
+    layer_nodes = {
+        "web": "n_web_app",
+        "api": "n_api_service",
+        "worker": "n_worker",
+        "core": "n_core",
+    }
+    layer_titles = {
+        "web": "Web App",
+        "api": "API Service",
+        "worker": "Worker",
+        "core": "Core Modules",
+    }
+
+    lines.append('    n_client["Client / Browser"]')
+    present_layers = [layer for layer in ("web", "api", "worker", "core") if layer_counts.get(layer, 0) > 0]
+    for layer in present_layers:
+        count = layer_counts[layer]
+        title = f"{layer_titles[layer]} ({count})"
+        lines.append(f'    {layer_nodes[layer]}["{_mermaid_safe_text(title)}"]')
+
+    has_datastore = bool(entities)
+    if has_datastore:
+        lines.append('    n_datastore[("Datastore")]')
+
+    external_by_layer: dict[str, Counter] = defaultdict(Counter)
+    cross_layer_counts: Counter = Counter()
     for edge in edges:
-        source = _sanitize(edge["from"])
-        target = _sanitize(edge["to"])
-        label = edge["type"]
-        if edge.get("confidence"):
-            label += f" ({edge['confidence']})"
-        lines.append(f"    {source} -->|{label}| {target}")
+        if not edge["from"].startswith("file:"):
+            continue
+        src_layer = module_layers.get(edge["from"])
+        if not src_layer or src_layer == "config":
+            continue
+        target = edge["to"]
+        if target.startswith("file:"):
+            dst_layer = module_layers.get(target)
+            if dst_layer and dst_layer != src_layer and dst_layer != "config":
+                cross_layer_counts[(src_layer, dst_layer, edge["type"])] += 1
+        elif target.startswith("external:"):
+            external_by_layer[src_layer][target.replace("external:", "")] += 1
 
-    lines.append("    classDef entry fill:#0f766e,stroke:#134e4a,color:#f0fdfa;")
+    rendered_edges: set[tuple[str, str, str]] = set()
+
+    def add_edge(src: str, dst: str, label: str) -> None:
+        key = (src, dst, label)
+        if key in rendered_edges:
+            return
+        rendered_edges.add(key)
+        lines.append(f"    {src} -->|{_mermaid_edge_label(label)}| {dst}")
+
+    if "web" in present_layers:
+        add_edge("n_client", layer_nodes["web"], "request")
+    elif "api" in present_layers:
+        add_edge("n_client", layer_nodes["api"], "request")
+    elif "core" in present_layers:
+        add_edge("n_client", layer_nodes["core"], "request")
+
+    if "web" in present_layers and "api" in present_layers:
+        add_edge(layer_nodes["web"], layer_nodes["api"], "api_call")
+
+    for src_layer, dst_layer, edge_type in sorted(cross_layer_counts.keys()):
+        if src_layer in layer_nodes and dst_layer in layer_nodes:
+            if src_layer in present_layers and dst_layer in present_layers:
+                add_edge(layer_nodes[src_layer], layer_nodes[dst_layer], edge_type)
+
+    if has_datastore:
+        if "api" in present_layers:
+            add_edge(layer_nodes["api"], "n_datastore", "read_write")
+        elif "core" in present_layers:
+            add_edge(layer_nodes["core"], "n_datastore", "read_write")
+        elif "worker" in present_layers:
+            add_edge(layer_nodes["worker"], "n_datastore", "read_write")
+
+    external_totals = Counter()
+    for counter in external_by_layer.values():
+        external_totals.update(counter)
+    top_externals = [name for name, _ in external_totals.most_common(8)]
+    for ext in top_externals:
+        ext_id = _sanitize(f"external:{ext}")
+        lines.append(f'    {ext_id}["{_short(_mermaid_safe_text(ext), 34)}"]')
+        for layer in present_layers:
+            count = external_by_layer[layer].get(ext, 0)
+            if count > 0 and layer in layer_nodes:
+                add_edge(layer_nodes[layer], ext_id, "depends_on")
+
+    if routes and "api" in present_layers:
+        route_node_id = "n_routes"
+        lines.append(f'    {route_node_id}["Routes ({len(routes)})"]')
+        add_edge(layer_nodes["api"], route_node_id, "serves")
+
+    if entrypoints:
+        entry_id = "n_entrypoints"
+        lines.append(f'    {entry_id}["Entrypoints ({len(entrypoints)})"]')
+        if "api" in present_layers:
+            add_edge(entry_id, layer_nodes["api"], "boot")
+        elif "web" in present_layers:
+            add_edge(entry_id, layer_nodes["web"], "boot")
+        elif "core" in present_layers:
+            add_edge(entry_id, layer_nodes["core"], "boot")
+
+    lines.append("    classDef client fill:#0ea5e9,stroke:#0f172a,color:#082f49;")
+    lines.append("    classDef service fill:#2563eb,stroke:#1e3a8a,color:#eff6ff;")
+    lines.append("    classDef data fill:#22c55e,stroke:#166534,color:#052e16;")
     lines.append("    classDef external fill:#334155,stroke:#0f172a,color:#e2e8f0;")
-    lines.append("    classDef core fill:#2563eb,stroke:#1d4ed8,color:#eff6ff;")
-    lines.append("    classDef leaf fill:#cbd5e1,stroke:#64748b,color:#0f172a;")
+    lines.append("    classDef aux fill:#f8fafc,stroke:#64748b,color:#0f172a;")
 
-    for node in nodes:
-        node_id = _sanitize(node["id"])
-        if node["id"] in entrypoint_ids:
-            lines.append(f"    class {node_id} entry;")
-        elif node["type"] == "external":
-            lines.append(f"    class {node_id} external;")
-        else:
-            rel = node["label"]
-            tag = core_leaf_tags.get(rel)
-            if tag == "core":
-                lines.append(f"    class {node_id} core;")
-            elif tag == "leaf":
-                lines.append(f"    class {node_id} leaf;")
+    lines.append("    class n_client client;")
+    for layer in present_layers:
+        lines.append(f"    class {layer_nodes[layer]} service;")
+    if has_datastore:
+        lines.append("    class n_datastore data;")
+    if routes:
+        lines.append("    class n_routes aux;")
+    if entrypoints:
+        lines.append("    class n_entrypoints aux;")
+    for ext in top_externals:
+        lines.append(f"    class {_sanitize(f'external:{ext}')} external;")
+
+    return "\n".join(lines) + "\n"
+
+
+def _classify_external_domain(name: str) -> str:
+    token = name.lower()
+    if any(key in token for key in ("db", "sql", "postgres", "mysql", "mongo", "redis", "dynamodb", "rds", "cache", "storage", "s3")):
+        return "datastore"
+    if any(key in token for key in ("kafka", "rabbit", "sqs", "pubsub", "queue", "stream")):
+        return "messaging"
+    if any(key in token for key in ("auth", "oauth", "jwt", "cognito", "auth0", "okta", "clerk")):
+        return "auth"
+    if any(key in token for key in ("log", "monitor", "sentry", "datadog", "prometheus", "grafana")):
+        return "observability"
+    return "third_party"
+
+
+def render_service_architecture_mermaid(
+    parsed_files: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    frameworks: list[str],
+    routes: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+    entrypoints: list[str],
+) -> str:
+    role_to_node = {
+        "web": "n_service_frontend",
+        "api": "n_service_api",
+        "worker": "n_service_worker",
+        "core": "n_service_shared",
+    }
+    role_to_label = {
+        "web": "Frontend Service",
+        "api": "API Service",
+        "worker": "Worker Service",
+        "core": "Shared/Core Service",
+    }
+
+    module_role: dict[str, str] = {}
+    role_counts = Counter()
+    for item in parsed_files:
+        role = _classify_arch_layer(item["path"])
+        if role == "config":
+            continue
+        module_id = f"file:{item['path']}"
+        module_role[module_id] = role
+        role_counts[role] += 1
+
+    if "Next.js" in frameworks:
+        role_counts["web"] = max(1, role_counts["web"])
+    if routes or any(fw in API_FRAMEWORKS for fw in frameworks):
+        role_counts["api"] = max(1, role_counts["api"])
+
+    lines = ["flowchart LR"]
+    lines.append('    n_users["Users / Clients"]')
+
+    present_roles = [role for role in ("web", "api", "worker", "core") if role_counts.get(role, 0) > 0]
+    for role in present_roles:
+        lines.append(f'    {role_to_node[role]}["{role_to_label[role]} ({role_counts[role]})"]')
+
+    rendered_edges: set[tuple[str, str, str]] = set()
+
+    def add_edge(src: str, dst: str, label: str) -> None:
+        key = (src, dst, label)
+        if key in rendered_edges:
+            return
+        rendered_edges.add(key)
+        lines.append(f"    {src} -->|{_mermaid_edge_label(label)}| {dst}")
+
+    if "web" in present_roles:
+        add_edge("n_users", role_to_node["web"], "http")
+    elif "api" in present_roles:
+        add_edge("n_users", role_to_node["api"], "http")
+    elif "core" in present_roles:
+        add_edge("n_users", role_to_node["core"], "request")
+
+    if "web" in present_roles and "api" in present_roles:
+        add_edge(role_to_node["web"], role_to_node["api"], "api_calls")
+    if "api" in present_roles and "core" in present_roles:
+        add_edge(role_to_node["api"], role_to_node["core"], "business_logic")
+    if "worker" in present_roles and "api" in present_roles:
+        add_edge(role_to_node["api"], role_to_node["worker"], "async_jobs")
+
+    role_domain_counts: dict[str, Counter] = defaultdict(Counter)
+    cross_role_edges = Counter()
+    for edge in edges:
+        if not edge["from"].startswith("file:"):
+            continue
+        from_role = module_role.get(edge["from"])
+        if not from_role:
+            continue
+
+        if edge["to"].startswith("file:"):
+            to_role = module_role.get(edge["to"])
+            if to_role and to_role != from_role:
+                cross_role_edges[(from_role, to_role)] += 1
+        elif edge["to"].startswith("external:"):
+            domain = _classify_external_domain(edge["to"].replace("external:", ""))
+            role_domain_counts[from_role][domain] += 1
+
+    for (from_role, to_role), count in sorted(cross_role_edges.items()):
+        if from_role in role_to_node and to_role in role_to_node and from_role in present_roles and to_role in present_roles:
+            add_edge(role_to_node[from_role], role_to_node[to_role], f"calls_{count}")
+
+    if entities:
+        role_domain_counts["api"]["datastore"] += len(entities)
+        if "worker" in present_roles:
+            role_domain_counts["worker"]["datastore"] += len(entities)
+
+    domain_to_node = {
+        "datastore": "n_domain_data",
+        "messaging": "n_domain_msg",
+        "auth": "n_domain_auth",
+        "observability": "n_domain_obs",
+        "third_party": "n_domain_3p",
+    }
+    domain_to_label = {
+        "datastore": "Datastore",
+        "messaging": "Message Broker",
+        "auth": "Auth Provider",
+        "observability": "Observability",
+        "third_party": "Third-party APIs",
+    }
+
+    present_domains: set[str] = set()
+    for domain_counts in role_domain_counts.values():
+        for domain, count in domain_counts.items():
+            if count > 0:
+                present_domains.add(domain)
+
+    for domain in ("datastore", "messaging", "auth", "observability", "third_party"):
+        if domain in present_domains:
+            lines.append(f'    {domain_to_node[domain]}["{domain_to_label[domain]}"]')
+
+    for role in present_roles:
+        for domain, count in role_domain_counts.get(role, Counter()).items():
+            if count > 0 and domain in domain_to_node:
+                add_edge(role_to_node[role], domain_to_node[domain], f"uses_{count}")
+
+    if routes and "api" in present_roles:
+        lines.append(f'    n_service_routes["API Routes ({len(routes)})"]')
+        add_edge(role_to_node["api"], "n_service_routes", "exposes")
+    if entrypoints:
+        lines.append(f'    n_service_entry["Entrypoints ({len(entrypoints)})"]')
+        if "api" in present_roles:
+            add_edge("n_service_entry", role_to_node["api"], "boot")
+        elif "web" in present_roles:
+            add_edge("n_service_entry", role_to_node["web"], "boot")
+        elif "core" in present_roles:
+            add_edge("n_service_entry", role_to_node["core"], "boot")
+
+    lines.append("    classDef client fill:#0ea5e9,stroke:#0f172a,color:#082f49;")
+    lines.append("    classDef service fill:#2563eb,stroke:#1e3a8a,color:#eff6ff;")
+    lines.append("    classDef infra fill:#334155,stroke:#0f172a,color:#e2e8f0;")
+    lines.append("    classDef data fill:#22c55e,stroke:#166534,color:#052e16;")
+    lines.append("    classDef aux fill:#f8fafc,stroke:#64748b,color:#0f172a;")
+
+    lines.append("    class n_users client;")
+    for role in present_roles:
+        lines.append(f"    class {role_to_node[role]} service;")
+    for domain in present_domains:
+        class_name = "data" if domain == "datastore" else "infra"
+        lines.append(f"    class {domain_to_node[domain]} {class_name};")
+    if routes:
+        lines.append("    class n_service_routes aux;")
+    if entrypoints:
+        lines.append("    class n_service_entry aux;")
+
+    return "\n".join(lines) + "\n"
+
+
+def render_iac_architecture_mermaid(iac: dict[str, Any]) -> str:
+    resources = iac.get("resources", []) if isinstance(iac, dict) else []
+    layer_counts = dict(iac.get("layer_counts") or {}) if isinstance(iac, dict) else {}
+    provider_counts = Counter(iac.get("providers") or {}) if isinstance(iac, dict) else Counter()
+    source_types = sorted((iac.get("source_types") or {}).keys()) if isinstance(iac, dict) else []
+
+    if not resources:
+        return (
+            "flowchart LR\n"
+            '    n_no_iac["No IaC Artifacts Detected"]\n'
+            '    n_hint["Scan Terraform/CloudFormation/Kubernetes/Compose/Bicep files"]\n'
+            "    n_no_iac --> n_hint\n"
+        )
+
+    lines = ["flowchart LR"]
+    source_label = "IaC Source"
+    if source_types:
+        source_label = f"IaC Source ({', '.join(source_types)})"
+    lines.append(f'    n_iac["{_mermaid_safe_text(_short(source_label, 60))}"]')
+    lines.append('    n_pipeline["Provisioning / Deploy"]')
+    lines.append("    n_iac -->|plan_apply| n_pipeline")
+
+    layer_nodes = {
+        "network": "n_layer_network",
+        "security": "n_layer_security",
+        "compute": "n_layer_compute",
+        "data": "n_layer_data",
+        "observability": "n_layer_observability",
+        "platform": "n_layer_platform",
+    }
+    layer_labels = {
+        "network": "Network",
+        "security": "Security / IAM",
+        "compute": "Compute / Runtime",
+        "data": "Data Stores",
+        "observability": "Observability",
+        "platform": "Platform",
+    }
+
+    present_layers = [layer for layer in layer_nodes if dict(layer_counts).get(layer, 0) > 0]
+    for layer in present_layers:
+        count = layer_counts.get(layer, 0)
+        lines.append(f'    {layer_nodes[layer]}["{layer_labels[layer]} ({count})"]')
+        lines.append(f"    n_pipeline -->|manages_{count}| {layer_nodes[layer]}")
+
+    if "compute" in present_layers and "data" in present_layers:
+        lines.append(f"    {layer_nodes['compute']} -->|reads_writes| {layer_nodes['data']}")
+    if "security" in present_layers and "compute" in present_layers:
+        lines.append(f"    {layer_nodes['security']} -->|guards| {layer_nodes['compute']}")
+    if "network" in present_layers and "compute" in present_layers:
+        lines.append(f"    {layer_nodes['network']} -->|routes_to| {layer_nodes['compute']}")
+
+    top_providers = [name for name, _ in provider_counts.most_common(8)]
+    for provider in top_providers:
+        provider_id = _sanitize(f"iac_provider:{provider}")
+        lines.append(f'    {provider_id}["{_mermaid_safe_text(provider)}"]')
+        lines.append(f"    n_pipeline -->|provider| {provider_id}")
+
+    lines.append("    classDef iac fill:#0ea5e9,stroke:#0f172a,color:#082f49;")
+    lines.append("    classDef platform fill:#2563eb,stroke:#1e3a8a,color:#eff6ff;")
+    lines.append("    classDef data fill:#22c55e,stroke:#166534,color:#052e16;")
+    lines.append("    classDef provider fill:#334155,stroke:#0f172a,color:#e2e8f0;")
+
+    lines.append("    class n_iac iac;")
+    lines.append("    class n_pipeline iac;")
+    for layer in present_layers:
+        class_name = "data" if layer == "data" else "platform"
+        lines.append(f"    class {layer_nodes[layer]} {class_name};")
+    for provider in top_providers:
+        lines.append(f"    class {_sanitize(f'iac_provider:{provider}')} provider;")
 
     return "\n".join(lines) + "\n"
 
@@ -1584,43 +2281,62 @@ def render_dependency_mermaid(
 ) -> str:
     lines = ["flowchart LR"]
     for node in nodes:
-        if node["type"] != "module":
+        if node["type"] not in {"module", "external"}:
             continue
-        lines.append(f"    {_sanitize(node['id'])}[\"{_short(node['label'], 36)}\"]")
+        lines.append(f"    {_sanitize(node['id'])}[\"{_short(_mermaid_safe_text(node['label']), 36)}\"]")
 
     for edge in edges:
-        if edge["type"] not in {"imports", "depends_on"}:
+        if edge["type"] not in {"imports", "depends_on", "trust_boundary_crossing"}:
             continue
-        if not edge["from"].startswith("file:") or not edge["to"].startswith("file:"):
+        if not edge["from"].startswith("file:"):
             continue
-        lines.append(f"    {_sanitize(edge['from'])} --> {_sanitize(edge['to'])}")
+        if not (edge["to"].startswith("file:") or edge["to"].startswith("external:")):
+            continue
+        label = _mermaid_edge_label(edge["type"], edge.get("confidence"))
+        lines.append(f"    {_sanitize(edge['from'])} -->|{label}| {_sanitize(edge['to'])}")
 
     lines.append("    classDef cycle fill:#fca5a5,stroke:#7f1d1d,color:#111827;")
     lines.append("    classDef default fill:#dbeafe,stroke:#1d4ed8,color:#0f172a;")
+    lines.append("    classDef external fill:#94a3b8,stroke:#334155,color:#0f172a;")
 
     cycle_nodes = {node for component in cycles for node in component}
     for node in cycle_nodes:
         lines.append(f"    class {_sanitize(node)} cycle;")
+    for node in nodes:
+        if node["type"] == "external":
+            lines.append(f"    class {_sanitize(node['id'])} external;")
 
     return "\n".join(lines) + "\n"
 
 
 def render_call_mermaid(function_calls: list[dict[str, Any]]) -> str:
     lines = ["flowchart LR"]
-    edges = function_calls[:120]
+    deduped: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+    for edge in function_calls:
+        key = (edge.get("from", ""), edge.get("to", ""), edge.get("confidence", ""))
+        if key in seen_edges:
+            continue
+        seen_edges.add(key)
+        deduped.append(edge)
+        if len(deduped) >= 120:
+            break
+    edges = deduped
 
     seen = set()
     for edge in edges:
         source = _sanitize(edge["from"])
         target = _sanitize(edge["to"])
         if source not in seen:
-            lines.append(f"    {source}[\"{_short(edge['from'].split('::')[-1], 30)}\"]")
+            source_label = _display_call_node_label(edge["from"])
+            lines.append(f"    {source}[\"{_short(_mermaid_safe_text(source_label), 30)}\"]")
             seen.add(source)
         if target not in seen:
-            lines.append(f"    {target}[\"{_short(edge['to'].split('::')[-1], 30)}\"]")
+            target_label = _display_call_node_label(edge["to"])
+            lines.append(f"    {target}[\"{_short(_mermaid_safe_text(target_label), 30)}\"]")
             seen.add(target)
 
-        label = edge.get("confidence", "")
+        label = _mermaid_edge_label("calls", edge.get("confidence"))
         connector = f" -->|{label}| " if label else " --> "
         lines.append(f"    {source}{connector}{target}")
 
@@ -1690,7 +2406,12 @@ def build_key_flows(
     flows = []
     for route in routes[:8]:
         source = route["file"]
-        middle = by_source[source][0] if by_source[source] else source
+        candidates = by_source[source]
+        if candidates:
+            preferred = next((value for value in candidates if not value.startswith("external_fn:")), candidates[0])
+            middle = _display_flow_target(preferred)
+        else:
+            middle = source
         flows.append(
             {
                 "name": f"{route['method']} {route['path']}",
@@ -1761,11 +2482,15 @@ def render_index_markdown(summary: dict[str, Any], terraform_drawio_file: str | 
         "",
         "## Artifacts",
         "",
-        "- [System Architecture](architecture.mmd)",
+        "- [Architecture (Services)](architecture-services.mmd)",
+        "- [Architecture (Code)](architecture-code.mmd)",
+        "- [Architecture (IaC)](architecture-iac.mmd)",
+        "- [System Architecture (Legacy Alias)](architecture.mmd)",
         "- [ER Diagram](er.mmd)",
         "- [Call Graph](call-graph.mmd)",
         "- [Dependency Graph](dependencies.mmd)",
         "- [Onboarding Map](onboarding.md)",
+        "- [Repo Summary](repo-summary.md)",
         "- [Top Files](top-files.md)",
         "- [Dashboard State](dashboard_state.json)",
         "",
@@ -1819,6 +2544,94 @@ def _sanitize(value: str) -> str:
     return "n_" + re.sub(r"[^a-zA-Z0-9_]", "_", value)
 
 
+def _mermaid_safe_text(value: Any) -> str:
+    text = str(value)
+    text = text.replace("\n", " ").replace("\r", " ")
+    text = text.replace('"', "'")
+    text = text.replace("<", "[").replace(">", "]")
+    text = text.replace("|", "/")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _mermaid_edge_label(edge_type: str, confidence: str | None = None) -> str:
+    edge_token = re.sub(r"[^a-zA-Z0-9]+", "_", str(edge_type or "rel")).strip("_").lower()
+    conf_token = re.sub(r"[^a-zA-Z0-9]+", "_", str(confidence or "")).strip("_").lower()
+    if conf_token:
+        return f"{edge_token}_{conf_token}"
+    return edge_token
+
+
+def _display_call_node_label(raw: str) -> str:
+    text = raw.strip()
+    if "::" in text:
+        owner, symbol = text.split("::", 1)
+        if owner == "external":
+            return symbol or "external_fn"
+        owner_name = Path(owner).name if owner else "unknown"
+        if symbol == "<module>":
+            return f"{owner_name}::module_scope"
+        return f"{owner_name}::{symbol}"
+    if text == "<module>":
+        return "module_scope"
+    return text
+
+
+def _display_flow_target(target: str) -> str:
+    if target.startswith("external_fn:"):
+        return f"external:{target.replace('external_fn:', '')}"
+    return target
+
+
+def render_repo_summary_markdown(
+    summary: dict[str, Any],
+    module_metrics: list[dict[str, Any]],
+    routes: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+    cycles: list[list[str]],
+    function_hotspots: list[dict[str, Any]],
+) -> str:
+    lines = [
+        "# Repo Summary",
+        "",
+        "## Overview",
+        "",
+        f"- Repository: `{summary.get('repo_name', 'unknown')}`",
+        f"- Languages: {', '.join(summary.get('languages', [])) or 'Not detected'}",
+        f"- Frameworks: {', '.join(summary.get('frameworks', [])) or 'Not detected'}",
+        f"- Entrypoints: {', '.join(summary.get('entrypoints', [])) or 'Not detected'}",
+        f"- Routes Detected: {len(routes)}",
+        f"- Entities Detected: {len(entities)}",
+        f"- Dependency Cycles: {len(cycles)}",
+        "",
+        "## Hotspots",
+        "",
+    ]
+    for row in module_metrics[:8]:
+        lines.append(
+            f"- `{row['module']}` (hotspot={row['hotspot_score']:.2f}, in={row['coupling_in']}, out={row['coupling_out']})"
+        )
+
+    lines.extend(["", "## Function Hotspots", ""])
+    if function_hotspots:
+        for row in function_hotspots[:10]:
+            lines.append(f"- `{row['function']}` (fan-in={row['fan_in']}, fan-out={row['fan_out']})")
+    else:
+        lines.append("- No function-level hotspots detected.")
+
+    lines.extend(
+        [
+            "",
+            "## Agent Handoff Notes",
+            "",
+            "- Use this file plus `dashboard_state.json` as context for downstream analyst/refactor/security agents.",
+            "- Prioritize reviewing top hotspot modules before implementing broad changes.",
+            "",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _json_dump(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -1857,6 +2670,7 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         sql_entities,
         sql_relationships,
     )
+    iac = parse_iac_artifacts(repo_path)
 
     external_nodes = [edge["to"].replace("external:", "") for edge in external_import_edges]
     external_nodes.extend(
@@ -1887,7 +2701,17 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         terraform_drawio_file = "terraform-architecture.drawio"
         terraform_drawio = render_terraform_drawio(terraform_graph, repo_path.name)
 
-    architecture_mmd = render_architecture_mermaid(nodes, edges, entrypoints, core_leaf_tags)
+    architecture_service_mmd = render_service_architecture_mermaid(
+        parsed_files,
+        edges,
+        frameworks,
+        routes,
+        entities,
+        entrypoints,
+    )
+    architecture_code_mmd = render_architecture_mermaid(parsed_files, edges, frameworks, routes, entities, entrypoints)
+    architecture_iac_mmd = render_iac_architecture_mermaid(iac)
+    architecture_mmd = architecture_service_mmd
     er_mmd = render_er_mermaid(entities, relationships)
     dbml = render_dbml(entities, relationships)
     call_mmd = render_call_mermaid(function_call_edges)
@@ -1948,8 +2772,26 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
 
     onboarding_md = render_onboarding_markdown(start_here, key_flows, glossary, change_safely)
     top_files_md = render_top_files_markdown(module_metrics, core_leaf_tags)
+    repo_summary_md = render_repo_summary_markdown(
+        summary,
+        module_metrics,
+        routes,
+        entities,
+        cycles,
+        function_hotspots,
+    )
     index_md = render_index_markdown(summary, terraform_drawio_file=terraform_drawio_file)
     case_file_md = render_case_file(parser_errors, skipped, confidence_notes)
+    confidence_distribution = Counter(edge.get("confidence", "unknown") for edge in edges)
+
+    diagram_payload: dict[str, str] = {
+        "architecture": architecture_mmd,
+        "er": er_mmd,
+        "call_graph": call_mmd,
+        "dependencies": dependency_mmd,
+    }
+    if terraform_drawio:
+        diagram_payload["terraform_drawio"] = terraform_drawio
 
     diagram_payload: dict[str, str] = {
         "architecture": architecture_mmd,
@@ -1963,6 +2805,30 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     dashboard_state = {
         "generated_at": summary["generated_at"],
         "summary": summary,
+        "analysis": {
+            "routes": routes,
+            "models": models,
+            "entities": entities,
+            "relationships": relationships,
+            "iac": {
+                "files": len(iac.get("files", [])),
+                "resources": len(iac.get("resources", [])),
+                "providers": iac.get("providers", {}),
+                "source_types": iac.get("source_types", {}),
+                "layer_counts": iac.get("layer_counts", {}),
+            },
+            "confidence_distribution": dict(confidence_distribution),
+            "counts": {
+                "modules": sum(1 for node in nodes if node["type"] == "module"),
+                "externals": sum(1 for node in nodes if node["type"] == "external"),
+                "edges": len(edges),
+                "routes": len(routes),
+                "entities": len(entities),
+                "cycles": len(cycles),
+                "iac_files": len(iac.get("files", [])),
+                "iac_resources": len(iac.get("resources", [])),
+            },
+        },
         "graphs": {
             "nodes": nodes,
             "edges": edges,
@@ -1971,12 +2837,23 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
             "function_hotspots": function_hotspots,
             "core_leaf_tags": core_leaf_tags,
         },
-        "diagrams": diagram_payload,
+        "diagrams": {
+            "architecture": architecture_mmd,
+            "architecture_services": architecture_service_mmd,
+            "architecture_code": architecture_code_mmd,
+            "architecture_iac": architecture_iac_mmd,
+            "er": er_mmd,
+            "call_graph": call_mmd,
+            "dependencies": dependency_mmd,
+        },
         "onboarding": {
             "start_here": start_here,
             "key_flows": key_flows,
             "glossary": glossary,
             "change_safely": change_safely,
+        },
+        "narrative": {
+            "repo_summary_markdown": repo_summary_md,
         },
         "kiv": {
             "graph_3d": "Deferred to Phase 2",
@@ -2008,24 +2885,38 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     _json_dump(artifacts_dir / "imports.json", {"imports": import_edges, "external_imports": external_import_edges})
     _json_dump(artifacts_dir / "calls.json", {"module_calls": module_call_edges, "function_calls": function_call_edges})
     _json_dump(artifacts_dir / "entities.json", {"entities": entities, "relationships": relationships})
+    _json_dump(artifacts_dir / "iac.json", iac)
     _json_dump(artifacts_dir / "cycles.json", {"cycles": cycles})
     _json_dump(
         artifacts_dir / "hotspots.json",
         {"modules": module_metrics[:30], "functions": function_hotspots},
     )
     _json_dump(artifacts_dir / "glossary.json", {"glossary": glossary})
-    if terraform_graph.get("files"):
-        _json_dump(artifacts_dir / "terraform.json", terraform_graph)
 
+    diagrams_dir = output_root / "diagrams"
+    diagrams_dir.mkdir(parents=True, exist_ok=True)
+
+    (output_root / "architecture-services.mmd").write_text(architecture_service_mmd, encoding="utf-8")
+    (output_root / "architecture-code.mmd").write_text(architecture_code_mmd, encoding="utf-8")
+    (output_root / "architecture-iac.mmd").write_text(architecture_iac_mmd, encoding="utf-8")
     (output_root / "architecture.mmd").write_text(architecture_mmd, encoding="utf-8")
     (output_root / "er.mmd").write_text(er_mmd, encoding="utf-8")
     (output_root / "er.dbml").write_text(dbml, encoding="utf-8")
     (output_root / "call-graph.mmd").write_text(call_mmd, encoding="utf-8")
     (output_root / "dependencies.mmd").write_text(dependency_mmd, encoding="utf-8")
     (output_root / "onboarding.md").write_text(onboarding_md, encoding="utf-8")
+    (output_root / "repo-summary.md").write_text(repo_summary_md, encoding="utf-8")
     (output_root / "top-files.md").write_text(top_files_md, encoding="utf-8")
     (output_root / "index.md").write_text(index_md, encoding="utf-8")
     (output_root / "case_file.md").write_text(case_file_md, encoding="utf-8")
+
+    (diagrams_dir / "architecture.mmd").write_text(architecture_mmd, encoding="utf-8")
+    (diagrams_dir / "architecture-services.mmd").write_text(architecture_service_mmd, encoding="utf-8")
+    (diagrams_dir / "architecture-code.mmd").write_text(architecture_code_mmd, encoding="utf-8")
+    (diagrams_dir / "architecture-iac.mmd").write_text(architecture_iac_mmd, encoding="utf-8")
+    (diagrams_dir / "er.mmd").write_text(er_mmd, encoding="utf-8")
+    (diagrams_dir / "call-graph.mmd").write_text(call_mmd, encoding="utf-8")
+    (diagrams_dir / "dependencies.mmd").write_text(dependency_mmd, encoding="utf-8")
     if terraform_drawio_file and terraform_drawio:
         (output_root / terraform_drawio_file).write_text(terraform_drawio, encoding="utf-8")
 

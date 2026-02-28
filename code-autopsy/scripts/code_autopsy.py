@@ -9,13 +9,15 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 from xray_core import XrayConfig, discover_source_files, run_xray
 
@@ -32,13 +34,41 @@ class PreparedSource:
 
 
 def _is_github_url(value: str) -> bool:
-    text = value.strip().lower()
-    return text.startswith("https://github.com/") and len(text.split("/")) >= 5
+    parsed = urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if parsed.netloc.lower() != "github.com":
+        return False
+    parts = [part for part in parsed.path.split("/") if part]
+    return len(parts) >= 2
+
+
+def _parse_github_source(source: str) -> tuple[str, str, str]:
+    parsed = urlparse(source.strip())
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) < 2:
+        raise ValueError(f"Invalid GitHub source URL: {source}")
+
+    owner = parts[0]
+    repo = parts[1]
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+
+    ref = "HEAD"
+    if len(parts) >= 4 and parts[2] == "tree":
+        ref = "/".join(parts[3:]) or "HEAD"
+
+    return owner, repo, ref
 
 
 def _repo_name_from_source(source: str, repo_path: Path | None = None) -> str:
     if repo_path is not None:
         return repo_path.resolve().name
+
+    if _is_github_url(source):
+        _, repo, _ = _parse_github_source(source)
+        safe_repo = "".join(ch for ch in repo if ch.isalnum() or ch in {"-", "_", "."}).strip("._-")
+        return safe_repo or "repository"
 
     text = source.strip().rstrip("/")
     name = text.split("/")[-1]
@@ -55,25 +85,73 @@ def _resolve_output_base(output: str) -> Path:
     return base
 
 
+def _safe_extract_tar(archive: tarfile.TarFile, target_dir: Path) -> None:
+    base = target_dir.resolve()
+    for member in archive.getmembers():
+        member_path = (target_dir / member.name).resolve()
+        if member_path != base and base not in member_path.parents:
+            raise RuntimeError("Unsafe archive path detected while extracting GitHub source.")
+    archive.extractall(target_dir)
+
+
+def _download_github_archive(source: str, source_root: Path) -> Path:
+    owner, repo, ref = _parse_github_source(source)
+    archive_url = f"https://codeload.github.com/{owner}/{repo}/tar.gz/{quote(ref, safe='')}"
+
+    download_path = source_root / f"{repo}-{int(time.time() * 1000)}.tar.gz"
+    request = Request(archive_url, headers={"User-Agent": "code-autopsy-xray"})
+    with urlopen(request, timeout=40) as response, download_path.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+
+    unpack_root = Path(tempfile.mkdtemp(prefix=f"{repo}-", dir=source_root.as_posix()))
+    with tarfile.open(download_path, "r:gz") as archive:
+        _safe_extract_tar(archive, unpack_root)
+    download_path.unlink(missing_ok=True)
+
+    extracted_dirs = [path for path in unpack_root.iterdir() if path.is_dir()]
+    if len(extracted_dirs) == 1:
+        return extracted_dirs[0]
+    return unpack_root
+
+
 def _prepare_source(source: str, output_base: Path, keep_clone: bool) -> PreparedSource:
     output_base.mkdir(parents=True, exist_ok=True)
 
     if _is_github_url(source):
         repo_name = _repo_name_from_source(source)
-        clone_root = output_base / "_sources"
-        clone_root.mkdir(parents=True, exist_ok=True)
-        temp_dir = Path(
-            tempfile.mkdtemp(prefix=f"{repo_name}-", dir=clone_root.as_posix())
+        source_root = output_base / "_sources"
+        source_root.mkdir(parents=True, exist_ok=True)
+
+        temp_repo_root = Path(
+            tempfile.mkdtemp(prefix=f"{repo_name}-", dir=source_root.as_posix())
         )
-        cmd = ["git", "clone", "--depth", "1", source, temp_dir.as_posix()]
-        completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"Failed to clone repository.\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        temp_dir = temp_repo_root
+        try:
+            temp_dir = _download_github_archive(source, source_root=temp_repo_root)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Archive download failed ({exc}). Falling back to shallow git clone.")
+            shutil.rmtree(temp_repo_root, ignore_errors=True)
+            temp_repo_root = Path(
+                tempfile.mkdtemp(prefix=f"{repo_name}-", dir=source_root.as_posix())
             )
+            temp_dir = temp_repo_root
+            cmd = ["git", "clone", "--depth", "1", source, temp_dir.as_posix()]
+            completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "Failed to fetch repository from GitHub URL. "
+                    "Archive download and shallow clone both failed.\n"
+                    f"clone stdout:\n{completed.stdout}\nclone stderr:\n{completed.stderr}"
+                ) from exc
+
         output_root = output_base / repo_name
-        cleanup_path = None if keep_clone else temp_dir
-        return PreparedSource(repo_path=temp_dir, repo_name=repo_name, output_root=output_root, cleanup_path=cleanup_path)
+        cleanup_path = None if keep_clone else temp_repo_root
+        return PreparedSource(
+            repo_path=temp_dir,
+            repo_name=repo_name,
+            output_root=output_root,
+            cleanup_path=cleanup_path,
+        )
 
     repo_path = Path(source).resolve()
     if not repo_path.exists() or not repo_path.is_dir():
@@ -315,6 +393,30 @@ def run_watch_loop(args: argparse.Namespace) -> int:
         return 0
 
 
+def _add_bool_flag(
+    parser: argparse.ArgumentParser,
+    *,
+    name: str,
+    default: bool,
+    help_text: str,
+) -> None:
+    dest = name.lstrip("-").replace("-", "_")
+    if hasattr(argparse, "BooleanOptionalAction"):
+        parser.add_argument(
+            name,
+            action=argparse.BooleanOptionalAction,
+            default=default,
+            help=help_text,
+        )
+        return
+
+    negated = f"--no-{name.lstrip('-')}"
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(name, dest=dest, action="store_true", help=help_text)
+    group.add_argument(negated, dest=dest, action="store_false", help=f"Disable {name.lstrip('-')}.")
+    parser.set_defaults(**{dest: default})
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Code-Autopsy X-Ray")
     parser.add_argument("source", help="Local repository path or GitHub URL to analyze")
@@ -324,18 +426,18 @@ def parse_args() -> argparse.Namespace:
         default=".autopsy-outputs",
         help="Output base directory (default: code-autopsy/.autopsy-outputs)",
     )
-    parser.add_argument(
-        "--viewer",
-        action=argparse.BooleanOptionalAction,
+    _add_bool_flag(
+        parser,
+        name="--viewer",
         default=True,
-        help="Install/start viewer frontend after generation (default: true)",
+        help_text="Install/start viewer frontend after generation (default: true)",
     )
     parser.add_argument("--viewer-port", type=int, default=3000, help="Viewer dev server port")
-    parser.add_argument(
-        "--open-viewer",
-        action=argparse.BooleanOptionalAction,
+    _add_bool_flag(
+        parser,
+        name="--open-viewer",
         default=True,
-        help="Open browser to viewer URL after launch (default: true)",
+        help_text="Open browser to viewer URL after launch (default: true)",
     )
     parser.add_argument("--export-images", action="store_true", help="Export PNG snapshots via Playwright")
     parser.add_argument("--watch", action="store_true", help="Best-effort watch mode (regenerate on changes)")
@@ -345,7 +447,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--keep-clone",
         action="store_true",
-        help="Keep temporary cloned repository when source is a GitHub URL.",
+        help="Keep temporary downloaded/cloned repository when source is a GitHub URL.",
     )
     return parser.parse_args()
 

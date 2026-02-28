@@ -28,7 +28,13 @@ export const fallbackData: DashboardState = {
     core_leaf_tags: { entry: "core", service: "leaf" }
   },
   diagrams: {
-    architecture: "flowchart LR\\nentry[\\\"entry\\\"] --> service[\\\"service\\\"]\\nservice --> db[\\\"db\\\"]\\n",
+    architecture:
+      "flowchart LR\\nusers[\\\"Users / Clients\\\"] --> frontend[\\\"Frontend Service\\\"]\\nfrontend --> api[\\\"API Service\\\"]\\napi --> db[\\\"Datastore\\\"]\\n",
+    architecture_services:
+      "flowchart LR\\nusers[\\\"Users / Clients\\\"] --> frontend[\\\"Frontend Service\\\"]\\nfrontend --> api[\\\"API Service\\\"]\\napi --> db[\\\"Datastore\\\"]\\n",
+    architecture_code: "flowchart LR\\nentry[\\\"entry\\\"] --> service[\\\"service\\\"]\\nservice --> db[\\\"db\\\"]\\n",
+    architecture_iac:
+      "flowchart LR\\niac[\\\"IaC Source\\\"] --> deploy[\\\"Provisioning / Deploy\\\"]\\ndeploy --> compute[\\\"Compute\\\"]\\n",
     er: "erDiagram\\n    NO_SCHEMA {\\n      string note\\n    }\\n",
     call_graph: "flowchart LR\\nentry --> service\\n",
     dependencies: "flowchart LR\\nentry --> service\\n",
