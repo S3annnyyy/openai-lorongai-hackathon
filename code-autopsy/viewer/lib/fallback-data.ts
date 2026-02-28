@@ -31,7 +31,8 @@ export const fallbackData: DashboardState = {
     architecture: "flowchart LR\\nentry[\\\"entry\\\"] --> service[\\\"service\\\"]\\nservice --> db[\\\"db\\\"]\\n",
     er: "erDiagram\\n    NO_SCHEMA {\\n      string note\\n    }\\n",
     call_graph: "flowchart LR\\nentry --> service\\n",
-    dependencies: "flowchart LR\\nentry --> service\\n"
+    dependencies: "flowchart LR\\nentry --> service\\n",
+    terraform_drawio: ""
   },
   onboarding: {
     start_here: ["entry", "service"],

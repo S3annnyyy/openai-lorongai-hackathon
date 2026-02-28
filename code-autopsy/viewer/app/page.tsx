@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import DrawioCard from "../components/DrawioCard";
 import ForceGraphPanel from "../components/ForceGraphPanel";
 import MermaidCard from "../components/MermaidCard";
 import { fallbackData } from "../lib/fallback-data";
@@ -258,6 +259,10 @@ export default function Page() {
               />
             ))}
           </div>
+
+          {data.diagrams.terraform_drawio ? (
+            <DrawioCard title="Terraform IaC (draw.io)" xml={data.diagrams.terraform_drawio} />
+          ) : null}
 
           <div className="panel">
             <h3>Start Here</h3>

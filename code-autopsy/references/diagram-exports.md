@@ -19,6 +19,7 @@ Edge labels should include relation type (`calls`, `depends_on`, `trust_boundary
 ## draw.io (optional)
 
 If requested, output `architecture.drawio` as mxGraph XML.
+If Terraform is detected, also output `terraform-architecture.drawio` to visualize IaC cloud topology.
 
 Minimum metadata per shape:
 - id

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import html
 import json
 import math
 import re
@@ -48,6 +49,7 @@ SQL_SCALARS = {
     "json",
     "jsonb",
 }
+TERRAFORM_REF_IGNORES = {"var", "local", "path", "count", "each", "self", "terraform"}
 
 
 @dataclass
@@ -111,6 +113,19 @@ def discover_source_files(repo_path: Path, max_files: int, lang_hints: set[str])
         if not path.is_file():
             continue
         if path.suffix not in allowed:
+            continue
+        if _should_skip(path, repo_path):
+            continue
+        files.append(path)
+        if len(files) >= max_files:
+            break
+    return files
+
+
+def discover_terraform_files(repo_path: Path, max_files: int = 600) -> list[Path]:
+    files: list[Path] = []
+    for path in sorted(repo_path.rglob("*.tf")):
+        if not path.is_file():
             continue
         if _should_skip(path, repo_path):
             continue
@@ -1077,6 +1092,278 @@ def build_change_safely(repo_path: Path, parsed_files: list[dict[str, Any]]) -> 
     return {"tests_to_run": commands, "critical_invariants": invariants}
 
 
+def _extract_hcl_block_body(text: str, open_brace_index: int) -> tuple[str, int]:
+    depth = 0
+    idx = open_brace_index
+    while idx < len(text):
+        char = text[idx]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace_index + 1 : idx], idx
+        idx += 1
+    return text[open_brace_index + 1 :], len(text) - 1
+
+
+def build_terraform_graph(repo_path: Path, terraform_files: list[Path]) -> dict[str, Any]:
+    block_pattern = re.compile(r'(?m)^\s*(resource|data|module|provider)\s+"([^"]+)"(?:\s+"([^"]+)")?\s*\{')
+
+    nodes: list[dict[str, Any]] = []
+    blocks: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    file_list = [path.relative_to(repo_path).as_posix() for path in terraform_files]
+
+    for path in terraform_files:
+        rel = path.relative_to(repo_path).as_posix()
+        text = _read_text(path)
+        for match in block_pattern.finditer(text):
+            kind = match.group(1)
+            first = match.group(2)
+            second = match.group(3)
+            if kind in {"resource", "data"} and not second:
+                continue
+
+            open_brace_index = match.end() - 1
+            body, _ = _extract_hcl_block_body(text, open_brace_index)
+            line = text[: match.start()].count("\n") + 1
+
+            if kind in {"resource", "data"}:
+                label = f"{first}.{second}"
+                node_id = f"{kind}:{label}"
+            else:
+                label = first
+                node_id = f"{kind}:{first}"
+
+            if node_id not in seen_ids:
+                seen_ids.add(node_id)
+                nodes.append(
+                    {
+                        "id": node_id,
+                        "kind": kind,
+                        "label": label,
+                        "file": rel,
+                        "line": line,
+                    }
+                )
+
+            blocks.append(
+                {
+                    "id": node_id,
+                    "kind": kind,
+                    "file": rel,
+                    "line": line,
+                    "label_1": first,
+                    "label_2": second,
+                    "body": body,
+                }
+            )
+
+    provider_nodes: dict[str, str] = {}
+    module_nodes: dict[str, str] = {}
+    resource_nodes: dict[tuple[str, str], str] = {}
+    data_nodes: dict[tuple[str, str], str] = {}
+    resource_types: set[str] = set()
+
+    for block in blocks:
+        kind = block["kind"]
+        first = block["label_1"]
+        second = block["label_2"]
+        node_id = block["id"]
+
+        if kind == "provider":
+            provider_nodes[first] = node_id
+        elif kind == "module":
+            module_nodes[first] = node_id
+        elif kind == "resource" and second:
+            resource_nodes[(first, second)] = node_id
+            resource_types.add(first)
+        elif kind == "data" and second:
+            data_nodes[(first, second)] = node_id
+
+    def ref_to_node_id(token: str) -> str | None:
+        cleaned = token.strip().strip('"').strip("'")
+        if not cleaned:
+            return None
+
+        if cleaned.startswith("module."):
+            parts = cleaned.split(".")
+            if len(parts) >= 2:
+                return module_nodes.get(parts[1])
+            return None
+
+        if cleaned.startswith("data."):
+            parts = cleaned.split(".")
+            if len(parts) >= 3:
+                return data_nodes.get((parts[1], parts[2]))
+            return None
+
+        parts = cleaned.split(".")
+        if len(parts) < 2:
+            return None
+        first, second = parts[0], parts[1]
+        if first in TERRAFORM_REF_IGNORES:
+            return None
+        if first in resource_types:
+            return resource_nodes.get((first, second))
+        return None
+
+    edges: list[dict[str, Any]] = []
+    edge_keys: set[tuple[str, str, str]] = set()
+
+    def add_edge(source: str, target: str | None, edge_type: str, reason: str) -> None:
+        if not target or source == target:
+            return
+        key = (source, target, edge_type)
+        if key in edge_keys:
+            return
+        edge_keys.add(key)
+        edges.append({"from": source, "to": target, "type": edge_type, "reason": reason})
+
+    for block in blocks:
+        source_id = block["id"]
+        kind = block["kind"]
+        body = block["body"]
+
+        if kind in {"resource", "data"}:
+            provider_hint = (block["label_1"] or "").split("_", 1)[0]
+            add_edge(source_id, provider_nodes.get(provider_hint), "provider_binding", "type-prefix")
+
+        for depends_match in re.finditer(r"depends_on\s*=\s*\[([^\]]*)\]", body, flags=re.DOTALL):
+            section = depends_match.group(1)
+            for token_match in re.finditer(
+                r'"([^"]+)"|\'([^\']+)\'|([A-Za-z0-9_]+\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)',
+                section,
+            ):
+                token = token_match.group(1) or token_match.group(2) or token_match.group(3) or ""
+                add_edge(source_id, ref_to_node_id(token), "depends_on", "explicit")
+
+        for data_match in re.finditer(r"\bdata\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\b", body):
+            ref = f"data.{data_match.group(1)}.{data_match.group(2)}"
+            add_edge(source_id, ref_to_node_id(ref), "references", "implicit")
+
+        for module_match in re.finditer(r"\bmodule\.([A-Za-z0-9_]+)\b", body):
+            ref = f"module.{module_match.group(1)}"
+            add_edge(source_id, ref_to_node_id(ref), "references", "implicit")
+
+        for resource_match in re.finditer(r"\b([A-Za-z][A-Za-z0-9_]*)\.([A-Za-z][A-Za-z0-9_]*)\b", body):
+            first, second = resource_match.group(1), resource_match.group(2)
+            if first in TERRAFORM_REF_IGNORES:
+                continue
+            ref = f"{first}.{second}"
+            add_edge(source_id, ref_to_node_id(ref), "references", "implicit")
+
+    nodes.sort(key=lambda item: (item["kind"], item["label"], item["id"]))
+    edges.sort(key=lambda item: (item["type"], item["from"], item["to"]))
+
+    return {
+        "files": file_list,
+        "nodes": nodes,
+        "edges": edges,
+        "summary": {
+            "providers": len([node for node in nodes if node["kind"] == "provider"]),
+            "resources": len([node for node in nodes if node["kind"] == "resource"]),
+            "data_sources": len([node for node in nodes if node["kind"] == "data"]),
+            "modules": len([node for node in nodes if node["kind"] == "module"]),
+        },
+    }
+
+
+def render_terraform_drawio(terraform_graph: dict[str, Any], repo_name: str) -> str:
+    nodes = terraform_graph.get("nodes", [])
+    edges = terraform_graph.get("edges", [])
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    styles = {
+        "provider": "rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#1d4ed8;fontStyle=1;",
+        "module": "rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#c2410c;",
+        "data": "rounded=1;whiteSpace=wrap;html=1;fillColor=#e2e8f0;strokeColor=#475569;",
+        "resource": "rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;",
+    }
+    risk_scores = {"provider": 0.35, "module": 0.5, "data": 0.45, "resource": 0.7}
+
+    columns = {"provider": 40, "module": 350, "data": 660, "resource": 970}
+    row_height = 110
+    row_state = {key: 0 for key in columns}
+
+    ordered_nodes = sorted(
+        nodes,
+        key=lambda item: (
+            {"provider": 0, "module": 1, "data": 2, "resource": 3}.get(item.get("kind", "resource"), 9),
+            item.get("label", ""),
+        ),
+    )
+
+    cell_ids: dict[str, str] = {}
+    lines = [
+        '<mxfile host="app.diagrams.net" type="device">',
+        f'  <diagram id="terraform-iac" name="Terraform IaC - {html.escape(repo_name, quote=True)}">',
+        '    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400" math="0" shadow="0">',
+        "      <root>",
+        '        <mxCell id="0" />',
+        '        <mxCell id="1" parent="0" />',
+    ]
+
+    next_id = 2
+    if not ordered_nodes:
+        lines.append(
+            '        <mxCell id="2" value="Terraform files detected&#xa;No provider/resource/module/data blocks found" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;" vertex="1" parent="1">'
+        )
+        lines.append('          <mxGeometry x="120" y="80" width="520" height="80" as="geometry" />')
+        lines.append("        </mxCell>")
+        next_id = 3
+
+    for node in ordered_nodes:
+        kind = node.get("kind", "resource")
+        x = columns.get(kind, 970)
+        y = 50 + row_state.get(kind, 0) * row_height
+        row_state[kind] = row_state.get(kind, 0) + 1
+
+        risk = risk_scores.get(kind, 0.5)
+        value = f"{node.get('label', node.get('id', 'node'))}\n[{kind}]\nrisk:{risk:.2f}"
+        escaped_value = html.escape(value, quote=True).replace("\n", "&#xa;")
+        cell_id = str(next_id)
+        next_id += 1
+        cell_ids[node["id"]] = cell_id
+
+        lines.append(
+            f'        <mxCell id="{cell_id}" value="{escaped_value}" style="{styles.get(kind, styles["resource"])}" vertex="1" parent="1">'
+        )
+        lines.append(f'          <mxGeometry x="{x}" y="{y}" width="260" height="72" as="geometry" />')
+        lines.append("        </mxCell>")
+
+    for edge in edges:
+        source = cell_ids.get(edge.get("from", ""))
+        target = cell_ids.get(edge.get("to", ""))
+        if not source or not target:
+            continue
+
+        edge_id = str(next_id)
+        next_id += 1
+        value = html.escape(edge.get("type", "link"), quote=True)
+        style = (
+            "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;"
+            "html=1;endArrow=block;endFill=1;strokeColor=#64748b;"
+        )
+        lines.append(
+            f'        <mxCell id="{edge_id}" value="{value}" style="{style}" edge="1" parent="1" source="{source}" target="{target}">'
+        )
+        lines.append('          <mxGeometry relative="1" as="geometry" />')
+        lines.append("        </mxCell>")
+
+    lines.extend(
+        [
+            "      </root>",
+            "    </mxGraphModel>",
+            "  </diagram>",
+            "</mxfile>",
+            f"<!-- generated_at: {generated_at} -->",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _top_function_hotspots(function_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     fan_in = Counter(edge["to"] for edge in function_calls)
     fan_out = Counter(edge["from"] for edge in function_calls)
@@ -1327,7 +1614,7 @@ def render_top_files_markdown(module_metrics: list[dict[str, Any]], core_leaf_ta
     return "\n".join(lines) + "\n"
 
 
-def render_index_markdown(summary: dict[str, Any]) -> str:
+def render_index_markdown(summary: dict[str, Any], terraform_drawio_file: str | None = None) -> str:
     sections = [
         "# Code Autopsy X-Ray",
         "",
@@ -1357,6 +1644,9 @@ def render_index_markdown(summary: dict[str, Any]) -> str:
         "- 3D graph mode is KIV (Phase 2) and not part of this MVP.",
         "- If no DB schema is detected, ER outputs include explicit placeholder sections.",
     ]
+    if terraform_drawio_file:
+        insert_at = sections.index("- [Dashboard State](dashboard_state.json)")
+        sections.insert(insert_at, f"- [Terraform IaC (draw.io)]({terraform_drawio_file})")
     return "\n".join(sections) + "\n"
 
 
@@ -1458,6 +1748,14 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     glossary = build_glossary(entities, parsed_files)
     change_safely = build_change_safely(repo_path, parsed_files)
     key_flows = build_key_flows(routes, module_call_edges, entities)
+    terraform_files = discover_terraform_files(repo_path)
+    terraform_graph = build_terraform_graph(repo_path, terraform_files)
+
+    terraform_drawio_file = None
+    terraform_drawio = ""
+    if terraform_graph.get("files"):
+        terraform_drawio_file = "terraform-architecture.drawio"
+        terraform_drawio = render_terraform_drawio(terraform_graph, repo_path.name)
 
     architecture_mmd = render_architecture_mermaid(nodes, edges, entrypoints, core_leaf_tags)
     er_mmd = render_er_mermaid(entities, relationships)
@@ -1480,6 +1778,8 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         "files_indexed": len(files),
         "files_skipped": skipped,
         "mode": "xray",
+        "terraform_detected": bool(terraform_graph.get("files")),
+        "terraform_files": len(terraform_graph.get("files", [])),
     }
 
     repo_json = {
@@ -1518,8 +1818,17 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
 
     onboarding_md = render_onboarding_markdown(start_here, key_flows, glossary, change_safely)
     top_files_md = render_top_files_markdown(module_metrics, core_leaf_tags)
-    index_md = render_index_markdown(summary)
+    index_md = render_index_markdown(summary, terraform_drawio_file=terraform_drawio_file)
     case_file_md = render_case_file(parser_errors, skipped, confidence_notes)
+
+    diagram_payload: dict[str, str] = {
+        "architecture": architecture_mmd,
+        "er": er_mmd,
+        "call_graph": call_mmd,
+        "dependencies": dependency_mmd,
+    }
+    if terraform_drawio:
+        diagram_payload["terraform_drawio"] = terraform_drawio
 
     dashboard_state = {
         "generated_at": summary["generated_at"],
@@ -1532,12 +1841,7 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
             "function_hotspots": function_hotspots,
             "core_leaf_tags": core_leaf_tags,
         },
-        "diagrams": {
-            "architecture": architecture_mmd,
-            "er": er_mmd,
-            "call_graph": call_mmd,
-            "dependencies": dependency_mmd,
-        },
+        "diagrams": diagram_payload,
         "onboarding": {
             "start_here": start_here,
             "key_flows": key_flows,
@@ -1546,6 +1850,17 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         },
         "kiv": {
             "graph_3d": "Deferred to Phase 2",
+        },
+        "iac": {
+            "terraform": {
+                "detected": bool(terraform_graph.get("files")),
+                "file_count": len(terraform_graph.get("files", [])),
+                "drawio_file": terraform_drawio_file,
+                "resources": terraform_graph.get("summary", {}).get("resources", 0),
+                "modules": terraform_graph.get("summary", {}).get("modules", 0),
+                "data_sources": terraform_graph.get("summary", {}).get("data_sources", 0),
+                "providers": terraform_graph.get("summary", {}).get("providers", 0),
+            }
         },
     }
 
@@ -1569,6 +1884,8 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         {"modules": module_metrics[:30], "functions": function_hotspots},
     )
     _json_dump(artifacts_dir / "glossary.json", {"glossary": glossary})
+    if terraform_graph.get("files"):
+        _json_dump(artifacts_dir / "terraform.json", terraform_graph)
 
     (output_root / "architecture.mmd").write_text(architecture_mmd, encoding="utf-8")
     (output_root / "er.mmd").write_text(er_mmd, encoding="utf-8")
@@ -1579,6 +1896,8 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     (output_root / "top-files.md").write_text(top_files_md, encoding="utf-8")
     (output_root / "index.md").write_text(index_md, encoding="utf-8")
     (output_root / "case_file.md").write_text(case_file_md, encoding="utf-8")
+    if terraform_drawio_file and terraform_drawio:
+        (output_root / terraform_drawio_file).write_text(terraform_drawio, encoding="utf-8")
 
     return {
         "output_root": output_root,
