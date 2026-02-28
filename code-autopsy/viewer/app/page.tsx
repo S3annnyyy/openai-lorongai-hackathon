@@ -8,6 +8,11 @@ import { DashboardState, GraphEdge, GraphNode } from "../lib/types";
 
 type DiagramTab = "architecture" | "er" | "call_graph" | "dependencies";
 
+type RepoListResponse = {
+  repos: string[];
+  defaultRepo: string | null;
+};
+
 const TABS: Array<{ id: DiagramTab; label: string }> = [
   { id: "architecture", label: "Architecture" },
   { id: "er", label: "ER" },
@@ -29,37 +34,82 @@ export default function Page() {
   const [data, setData] = useState<DashboardState>(fallbackData);
   const [loaded, setLoaded] = useState(false);
   const [loadWarning, setLoadWarning] = useState<string>("");
+  const [repos, setRepos] = useState<string[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState<string>("");
   const [selectedTab, setSelectedTab] = useState<DiagramTab>("architecture");
   const [search, setSearch] = useState("");
   const [edgeType, setEdgeType] = useState("all");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   useEffect(() => {
-    const query = new URLSearchParams(window.location.search);
-    const tab = query.get("tab") as DiagramTab | null;
-    if (tab && TABS.some((item) => item.id === tab)) {
-      setSelectedTab(tab);
+    async function initialize() {
+      const query = new URLSearchParams(window.location.search);
+      const tab = query.get("tab") as DiagramTab | null;
+      const repoFromQuery = query.get("repo") || "";
+      if (tab && TABS.some((item) => item.id === tab)) {
+        setSelectedTab(tab);
+      }
+
+      try {
+        const response = await fetch("/api/autopsy", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const payload = (await response.json()) as RepoListResponse;
+        const repoList = payload.repos || [];
+        setRepos(repoList);
+
+        if (repoList.length === 0) {
+          setLoadWarning(
+            "No autopsy output found. Generate artifacts under code-autopsy/.autopsy-outputs/<repo_name>/."
+          );
+          setLoaded(true);
+          return;
+        }
+
+        const repoToUse = repoList.includes(repoFromQuery)
+          ? repoFromQuery
+          : payload.defaultRepo || repoList[0];
+        setSelectedRepo(repoToUse);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLoadWarning(`Failed to list repos from .autopsy-outputs (${message}). Using fallback data.`);
+        setLoaded(true);
+      }
     }
+
+    initialize();
   }, []);
 
   useEffect(() => {
-    async function load() {
+    async function loadRepoDashboard(repo: string) {
+      setLoaded(false);
       try {
-        const response = await fetch("./data/latest/dashboard_state.json", { cache: "no-store" });
+        const response = await fetch(`/api/autopsy/${encodeURIComponent(repo)}`, { cache: "no-store" });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
         const payload = (await response.json()) as DashboardState;
         setData(payload);
+        setLoadWarning("");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        setLoadWarning(`Using fallback data because dashboard_state.json was not loaded (${message}).`);
+        setLoadWarning(`Using fallback data because dashboard_state.json was not loaded for '${repo}' (${message}).`);
       } finally {
         setLoaded(true);
       }
     }
-    load();
-  }, []);
+
+    if (!selectedRepo) return;
+    loadRepoDashboard(selectedRepo);
+  }, [selectedRepo]);
+
+  useEffect(() => {
+    if (!selectedRepo) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("repo", selectedRepo);
+    window.history.replaceState({}, "", url.toString());
+  }, [selectedRepo]);
 
   const selectedNode = useMemo(
     () => findNode(data.graphs.nodes, selectedNodeId),
@@ -83,8 +133,26 @@ export default function Page() {
       <section className="dashboard-header">
         <h1 className="dashboard-title">Code Autopsy X-Ray Dashboard</h1>
         <p className="dashboard-subtitle">
-          2D interactive module graph + focused and full diagram views. 3D graph remains KIV (Phase 2).
+          Visualizing outputs from <code>code-autopsy/.autopsy-outputs/&lt;repo&gt;</code>.
         </p>
+        <div className="graph-controls">
+          <select
+            className="control-select"
+            value={selectedRepo}
+            onChange={(event) => setSelectedRepo(event.target.value)}
+            disabled={repos.length === 0}
+          >
+            {repos.length === 0 ? (
+              <option value="">No repos found</option>
+            ) : (
+              repos.map((repo) => (
+                <option key={repo} value={repo}>
+                  {repo}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
         <div className="kpi-grid">
           <div className="kpi">
             <div className="kpi-label">Repository</div>

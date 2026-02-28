@@ -4,7 +4,7 @@ Use UTF-8 JSON with stable keys and deterministic ordering when possible.
 
 ## X-Ray MVP Required Artifacts
 
-Default output root: `<repo>/docs/code-autopsy`
+Default output root: `code-autopsy/.autopsy-outputs/<repo_name>`
 
 Required files:
 - `repo.json`
@@ -31,7 +31,6 @@ Required files:
 - `artifacts/glossary.json`
 
 Optional files:
-- `viewer-static/*` (when `--viewer` succeeds)
 - `images/*.png` (when `--export-images` succeeds)
 
 ## dashboard_state.json

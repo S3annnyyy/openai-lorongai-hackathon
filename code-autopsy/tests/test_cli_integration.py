@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -15,15 +16,19 @@ def test_cli_generates_docs_without_viewer(tmp_path: Path) -> None:
 
     script = Path(__file__).resolve().parents[1] / "scripts" / "code_autopsy.py"
 
+    output_base = tmp_path / "autopsy-out"
+
     proc = subprocess.run(
         [
-            "python3",
+            sys.executable,
             str(script),
             str(repo),
             "--mode",
             "xray",
             "--output",
-            "docs",
+            str(output_base),
+            "--no-viewer",
+            "--no-open-viewer",
             "--max-files",
             "50",
         ],
@@ -33,6 +38,6 @@ def test_cli_generates_docs_without_viewer(tmp_path: Path) -> None:
     )
 
     assert proc.returncode == 0, proc.stderr
-    output_root = repo / "docs" / "code-autopsy"
+    output_root = output_base / repo.name
     assert (output_root / "index.md").exists()
     assert "Start Here" in proc.stdout
