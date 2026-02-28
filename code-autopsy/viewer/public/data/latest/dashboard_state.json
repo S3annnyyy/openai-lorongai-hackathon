@@ -1,0 +1,444 @@
+{
+  "diagrams": {
+    "architecture": "flowchart LR\n    n_file_api_index_py[\"api/index.py\"]\n    n_file_app_api_helloNextJs_route_ts[\"app/api/helloNextJs/route.ts\"]\n    n_file_app_layout_tsx[\"app/layout.tsx\"]\n    n_file_app_page_tsx[\"app/page.tsx\"]\n    n_file_next_config_js[\"next.config.js\"]\n    n_file_postcss_config_js[\"postcss.config.js\"]\n    n_file_tailwind_config_js[\"tailwind.config.js\"]\n    n_external_FastAPI[\"FastAPI\"]\n    n_external_Inter[\"Inter\"]\n    n_external_async[\"async\"]\n    n_external_fastapi[\"fastapi\"]\n    n_external_get[\"get\"]\n    n_external_gradient[\"gradient\"]\n    n_external_json[\"json\"]\n    n_external_next_font_google[\"next/font/google\"]\n    n_external_next_image[\"next/image\"]\n    n_external_next_link[\"next/link\"]\n    n_external_next_server[\"next/server\"]\n    n_external_var[\"var\"]\n    n_file_api_index_py -->|calls (low)| n_external_FastAPI\n    n_file_api_index_py -->|depends_on (low)| n_external_fastapi\n    n_file_api_index_py -->|calls (low)| n_external_get\n    n_file_app_api_helloNextJs_route_ts -->|calls (low)| n_external_json\n    n_file_app_api_helloNextJs_route_ts -->|depends_on (low)| n_external_next_server\n    n_file_app_api_helloNextJs_route_ts -->|calls (medium)| n_file_app_api_helloNextJs_route_ts\n    n_file_app_layout_tsx -->|calls (low)| n_external_Inter\n    n_file_app_layout_tsx -->|depends_on (low)| n_external_next_font_google\n    n_file_app_layout_tsx -->|calls (medium)| n_file_app_layout_tsx\n    n_file_app_page_tsx -->|depends_on (low)| n_external_next_image\n    n_file_app_page_tsx -->|depends_on (low)| n_external_next_link\n    n_file_app_page_tsx -->|calls (medium)| n_file_app_page_tsx\n    n_file_next_config_js -->|calls (low)| n_external_async\n    n_file_tailwind_config_js -->|calls (low)| n_external_gradient\n    n_file_tailwind_config_js -->|calls (low)| n_external_var\n    classDef entry fill:#0f766e,stroke:#134e4a,color:#f0fdfa;\n    classDef external fill:#334155,stroke:#0f172a,color:#e2e8f0;\n    classDef core fill:#2563eb,stroke:#1d4ed8,color:#eff6ff;\n    classDef leaf fill:#cbd5e1,stroke:#64748b,color:#0f172a;\n    class n_file_app_api_helloNextJs_route_ts core;\n    class n_file_app_layout_tsx core;\n    class n_file_postcss_config_js leaf;\n    class n_external_FastAPI external;\n    class n_external_Inter external;\n    class n_external_async external;\n    class n_external_fastapi external;\n    class n_external_get external;\n    class n_external_gradient external;\n    class n_external_json external;\n    class n_external_next_font_google external;\n    class n_external_next_image external;\n    class n_external_next_link external;\n    class n_external_next_server external;\n    class n_external_var external;\n",
+    "call_graph": "flowchart LR\n    n_app_api_helloNextJs_route_ts___module_[\"<module>\"]\n    n_app_api_helloNextJs_route_ts__GET[\"GET\"]\n    n_app_api_helloNextJs_route_ts___module_ -->|medium| n_app_api_helloNextJs_route_ts__GET\n    n_app_layout_tsx___module_[\"<module>\"]\n    n_app_layout_tsx__RootLayout[\"RootLayout\"]\n    n_app_layout_tsx___module_ -->|medium| n_app_layout_tsx__RootLayout\n    n_app_page_tsx___module_[\"<module>\"]\n    n_app_page_tsx__Home[\"Home\"]\n    n_app_page_tsx___module_ -->|medium| n_app_page_tsx__Home\n",
+    "dependencies": "flowchart LR\n    n_file_api_index_py[\"api/index.py\"]\n    n_file_app_api_helloNextJs_route_ts[\"app/api/helloNextJs/route.ts\"]\n    n_file_app_layout_tsx[\"app/layout.tsx\"]\n    n_file_app_page_tsx[\"app/page.tsx\"]\n    n_file_next_config_js[\"next.config.js\"]\n    n_file_postcss_config_js[\"postcss.config.js\"]\n    n_file_tailwind_config_js[\"tailwind.config.js\"]\n    classDef cycle fill:#fca5a5,stroke:#7f1d1d,color:#111827;\n    classDef default fill:#dbeafe,stroke:#1d4ed8,color:#0f172a;\n",
+    "er": "erDiagram\n    NO_SCHEMA {\n      string note\n    }\n"
+  },
+  "generated_at": "2026-02-28T03:57:37.376486+00:00",
+  "graphs": {
+    "core_leaf_tags": {
+      "api/index.py": "middle",
+      "app/api/helloNextJs/route.ts": "core",
+      "app/layout.tsx": "core",
+      "app/page.tsx": "middle",
+      "next.config.js": "middle",
+      "postcss.config.js": "leaf",
+      "tailwind.config.js": "middle"
+    },
+    "cycles": [],
+    "edges": [
+      {
+        "confidence": "low",
+        "from": "file:api/index.py",
+        "reason": "callee-not-indexed",
+        "to": "external:FastAPI",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:api/index.py",
+        "reason": "python-external",
+        "to": "external:fastapi",
+        "type": "depends_on",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:api/index.py",
+        "reason": "callee-not-indexed",
+        "to": "external:get",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:app/api/helloNextJs/route.ts",
+        "reason": "callee-not-indexed",
+        "to": "external:json",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:app/api/helloNextJs/route.ts",
+        "reason": "js-external",
+        "to": "external:next/server",
+        "type": "depends_on",
+        "weight": 1.0
+      },
+      {
+        "confidence": "medium",
+        "from": "file:app/api/helloNextJs/route.ts",
+        "reason": "regex-callsite",
+        "to": "file:app/api/helloNextJs/route.ts",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:app/layout.tsx",
+        "reason": "callee-not-indexed",
+        "to": "external:Inter",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:app/layout.tsx",
+        "reason": "js-external",
+        "to": "external:next/font/google",
+        "type": "depends_on",
+        "weight": 1.0
+      },
+      {
+        "confidence": "medium",
+        "from": "file:app/layout.tsx",
+        "reason": "regex-callsite",
+        "to": "file:app/layout.tsx",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:app/page.tsx",
+        "reason": "js-external",
+        "to": "external:next/image",
+        "type": "depends_on",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:app/page.tsx",
+        "reason": "js-external",
+        "to": "external:next/link",
+        "type": "depends_on",
+        "weight": 1.0
+      },
+      {
+        "confidence": "medium",
+        "from": "file:app/page.tsx",
+        "reason": "regex-callsite",
+        "to": "file:app/page.tsx",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:next.config.js",
+        "reason": "callee-not-indexed",
+        "to": "external:async",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:tailwind.config.js",
+        "reason": "callee-not-indexed",
+        "to": "external:gradient",
+        "type": "calls",
+        "weight": 1.0
+      },
+      {
+        "confidence": "low",
+        "from": "file:tailwind.config.js",
+        "reason": "callee-not-indexed",
+        "to": "external:var",
+        "type": "calls",
+        "weight": 1.0
+      }
+    ],
+    "function_hotspots": [
+      {
+        "fan_in": 0,
+        "fan_out": 1,
+        "function": "app/api/helloNextJs/route.ts::<module>",
+        "hotspot_score": 1
+      },
+      {
+        "fan_in": 1,
+        "fan_out": 0,
+        "function": "app/api/helloNextJs/route.ts::GET",
+        "hotspot_score": 1
+      },
+      {
+        "fan_in": 0,
+        "fan_out": 1,
+        "function": "app/layout.tsx::<module>",
+        "hotspot_score": 1
+      },
+      {
+        "fan_in": 1,
+        "fan_out": 0,
+        "function": "app/layout.tsx::RootLayout",
+        "hotspot_score": 1
+      },
+      {
+        "fan_in": 0,
+        "fan_out": 1,
+        "function": "app/page.tsx::<module>",
+        "hotspot_score": 1
+      },
+      {
+        "fan_in": 1,
+        "fan_out": 0,
+        "function": "app/page.tsx::Home",
+        "hotspot_score": 1
+      }
+    ],
+    "hotspots": [
+      {
+        "complexity": 0.2,
+        "coupling_in": 1,
+        "coupling_out": 3,
+        "dependency_fragility": 0.2,
+        "hotspot_score": 0.2625,
+        "module": "app/api/helloNextJs/route.ts",
+        "module_id": "file:app/api/helloNextJs/route.ts",
+        "ownership_risk": 0.45,
+        "test_coverage_proxy": 0.35
+      },
+      {
+        "complexity": 0.2,
+        "coupling_in": 1,
+        "coupling_out": 3,
+        "dependency_fragility": 0.2,
+        "hotspot_score": 0.2625,
+        "module": "app/layout.tsx",
+        "module_id": "file:app/layout.tsx",
+        "ownership_risk": 0.45,
+        "test_coverage_proxy": 0.35
+      },
+      {
+        "complexity": 0.2,
+        "coupling_in": 1,
+        "coupling_out": 3,
+        "dependency_fragility": 0.2,
+        "hotspot_score": 0.2625,
+        "module": "app/page.tsx",
+        "module_id": "file:app/page.tsx",
+        "ownership_risk": 0.45,
+        "test_coverage_proxy": 0.35
+      },
+      {
+        "complexity": 0.15,
+        "coupling_in": 0,
+        "coupling_out": 3,
+        "dependency_fragility": 0.2,
+        "hotspot_score": 0.245,
+        "module": "api/index.py",
+        "module_id": "file:api/index.py",
+        "ownership_risk": 0.45,
+        "test_coverage_proxy": 0.35
+      },
+      {
+        "complexity": 0.1,
+        "coupling_in": 0,
+        "coupling_out": 2,
+        "dependency_fragility": 0.1333,
+        "hotspot_score": 0.1933,
+        "module": "tailwind.config.js",
+        "module_id": "file:tailwind.config.js",
+        "ownership_risk": 0.45,
+        "test_coverage_proxy": 0.35
+      },
+      {
+        "complexity": 0.05,
+        "coupling_in": 0,
+        "coupling_out": 1,
+        "dependency_fragility": 0.0667,
+        "hotspot_score": 0.1417,
+        "module": "next.config.js",
+        "module_id": "file:next.config.js",
+        "ownership_risk": 0.45,
+        "test_coverage_proxy": 0.35
+      },
+      {
+        "complexity": 0.0,
+        "coupling_in": 0,
+        "coupling_out": 0,
+        "dependency_fragility": 0.0,
+        "hotspot_score": 0.09,
+        "module": "postcss.config.js",
+        "module_id": "file:postcss.config.js",
+        "ownership_risk": 0.45,
+        "test_coverage_proxy": 0.35
+      }
+    ],
+    "nodes": [
+      {
+        "criticality": 0.245,
+        "id": "file:api/index.py",
+        "label": "api/index.py",
+        "lang": "python",
+        "type": "module"
+      },
+      {
+        "criticality": 0.2625,
+        "id": "file:app/api/helloNextJs/route.ts",
+        "label": "app/api/helloNextJs/route.ts",
+        "lang": "typescript",
+        "type": "module"
+      },
+      {
+        "criticality": 0.2625,
+        "id": "file:app/layout.tsx",
+        "label": "app/layout.tsx",
+        "lang": "typescript",
+        "type": "module"
+      },
+      {
+        "criticality": 0.2625,
+        "id": "file:app/page.tsx",
+        "label": "app/page.tsx",
+        "lang": "typescript",
+        "type": "module"
+      },
+      {
+        "criticality": 0.1417,
+        "id": "file:next.config.js",
+        "label": "next.config.js",
+        "lang": "javascript",
+        "type": "module"
+      },
+      {
+        "criticality": 0.09,
+        "id": "file:postcss.config.js",
+        "label": "postcss.config.js",
+        "lang": "javascript",
+        "type": "module"
+      },
+      {
+        "criticality": 0.1933,
+        "id": "file:tailwind.config.js",
+        "label": "tailwind.config.js",
+        "lang": "javascript",
+        "type": "module"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:FastAPI",
+        "label": "FastAPI",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:Inter",
+        "label": "Inter",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:async",
+        "label": "async",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:fastapi",
+        "label": "fastapi",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:get",
+        "label": "get",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:gradient",
+        "label": "gradient",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:json",
+        "label": "json",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:next/font/google",
+        "label": "next/font/google",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:next/image",
+        "label": "next/image",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:next/link",
+        "label": "next/link",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:next/server",
+        "label": "next/server",
+        "lang": "external",
+        "type": "external"
+      },
+      {
+        "criticality": 0.2,
+        "id": "external:var",
+        "label": "var",
+        "lang": "external",
+        "type": "external"
+      }
+    ]
+  },
+  "kiv": {
+    "graph_3d": "Deferred to Phase 2"
+  },
+  "onboarding": {
+    "change_safely": {
+      "critical_invariants": [
+        "Keep authentication and authorization middleware in the request path.",
+        "Preserve migration ordering and avoid editing applied migration files.",
+        "Maintain API contract fields consumed by downstream clients."
+      ],
+      "tests_to_run": [
+        "npm test",
+        "npm run lint",
+        "pytest"
+      ]
+    },
+    "glossary": [],
+    "key_flows": [
+      {
+        "flow": "Request -> api/index.py -> external_fn:FastAPI -> datastore",
+        "name": "GET /api/py/helloFastApi"
+      }
+    ],
+    "start_here": [
+      "api/index.py",
+      "app/api/helloNextJs/route.ts",
+      "app/layout.tsx",
+      "app/page.tsx",
+      "next.config.js"
+    ]
+  },
+  "summary": {
+    "entrypoints": [],
+    "files_indexed": 7,
+    "files_skipped": 0,
+    "frameworks": [
+      "FastAPI",
+      "Next.js"
+    ],
+    "generated_at": "2026-02-28T03:57:37.376486+00:00",
+    "languages": [
+      "JavaScript",
+      "Python",
+      "TypeScript"
+    ],
+    "mode": "xray",
+    "repo_name": "nextjs-fastapi",
+    "repo_root": "/Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/demo-repos/nextjs-fastapi"
+  }
+}

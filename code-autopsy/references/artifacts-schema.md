@@ -2,6 +2,51 @@
 
 Use UTF-8 JSON with stable keys and deterministic ordering when possible.
 
+## X-Ray MVP Required Artifacts
+
+Default output root: `<repo>/docs/code-autopsy`
+
+Required files:
+- `repo.json`
+- `graph.json`
+- `metrics.json`
+- `dashboard_state.json`
+- `case_file.md`
+- `architecture.mmd`
+- `er.mmd`
+- `er.dbml`
+- `call-graph.mmd`
+- `dependencies.mmd`
+- `onboarding.md`
+- `top-files.md`
+- `index.md`
+- `artifacts/entrypoints.json`
+- `artifacts/routes.json`
+- `artifacts/models.json`
+- `artifacts/imports.json`
+- `artifacts/calls.json`
+- `artifacts/entities.json`
+- `artifacts/cycles.json`
+- `artifacts/hotspots.json`
+- `artifacts/glossary.json`
+
+Optional files:
+- `viewer-static/*` (when `--viewer` succeeds)
+- `images/*.png` (when `--export-images` succeeds)
+
+## dashboard_state.json
+
+{
+  "generated_at": "string",
+  "summary": {},
+  "graphs": {},
+  "diagrams": {},
+  "onboarding": {},
+  "kiv": {
+    "graph_3d": "Deferred to Phase 2"
+  }
+}
+
 ## repo.json
 
 {
@@ -70,6 +115,8 @@ Use UTF-8 JSON with stable keys and deterministic ordering when possible.
     }
   ]
 }
+
+> Note: `attack_surface.json`, `failure_simulation.json`, and other attacker/defender/refactorer/historian artifacts are Phase 2 (KIV), not part of X-Ray MVP execution.
 
 ## failure_simulation.json
 
