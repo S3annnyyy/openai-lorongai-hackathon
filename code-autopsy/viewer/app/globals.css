@@ -113,7 +113,7 @@ main {
 .layout-grid {
   margin-top: 18px;
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.2fr);
+  grid-template-columns: 1fr;
   gap: 16px;
 }
 
@@ -136,6 +136,29 @@ main {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.edge-budget {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.edge-budget label {
+  min-width: 150px;
+}
+
+.edge-budget input[type="range"] {
+  width: min(380px, 100%);
+}
+
+.scope-note {
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+  color: var(--muted);
 }
 
 .control-input,
@@ -251,6 +274,11 @@ main {
 .mermaid-shell.compact {
   min-height: 320px;
   height: 320px;
+}
+
+.mermaid-shell.expanded {
+  min-height: 760px;
+  height: 760px;
 }
 
 .diagram-header {
@@ -575,13 +603,8 @@ main {
 .mermaid-modal-static {
   min-width: 100%;
 }
-
 @media (max-width: 1080px) {
   .layout-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .diagram-grid {
     grid-template-columns: 1fr;
   }
 
@@ -610,5 +633,15 @@ main {
   .mermaid-shell-modal {
     min-height: 62vh;
     height: calc(100vh - 160px);
+  }
+
+  .mermaid-shell.expanded {
+    min-height: 520px;
+    height: 520px;
+  }
+
+  .edge-budget {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

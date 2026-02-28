@@ -49,6 +49,9 @@ CLI contract:
 - `--viewer/--no-viewer`: auto install/start viewer frontend after output (default: enabled).
 - `--open-viewer/--no-open-viewer`: auto-open browser dashboard URL (default: enabled).
 
+Default expectation for this skill:
+- if `--no-viewer` and `--no-open-viewer` are not provided, the CLI should attempt to start the viewer and open the dashboard URL.
+
 Examples:
 - `python scripts/code_autopsy.py https://github.com/org/repo`
 - `python scripts/code_autopsy.py .`

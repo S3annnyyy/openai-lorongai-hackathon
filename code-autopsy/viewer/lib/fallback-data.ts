@@ -28,16 +28,35 @@ export const fallbackData: DashboardState = {
     core_leaf_tags: { entry: "core", service: "leaf" }
   },
   diagrams: {
-    architecture:
-      "flowchart LR\\nusers[\\\"Users / Clients\\\"] --> frontend[\\\"Frontend Service\\\"]\\nfrontend --> api[\\\"API Service\\\"]\\napi --> db[\\\"Datastore\\\"]\\n",
-    architecture_services:
-      "flowchart LR\\nusers[\\\"Users / Clients\\\"] --> frontend[\\\"Frontend Service\\\"]\\nfrontend --> api[\\\"API Service\\\"]\\napi --> db[\\\"Datastore\\\"]\\n",
-    architecture_code: "flowchart LR\\nentry[\\\"entry\\\"] --> service[\\\"service\\\"]\\nservice --> db[\\\"db\\\"]\\n",
-    architecture_iac:
-      "flowchart LR\\niac[\\\"IaC Source\\\"] --> deploy[\\\"Provisioning / Deploy\\\"]\\ndeploy --> compute[\\\"Compute\\\"]\\n",
-    er: "erDiagram\\n    NO_SCHEMA {\\n      string note\\n    }\\n",
-    call_graph: "flowchart LR\\nentry --> service\\n",
-    dependencies: "flowchart LR\\nentry --> service\\n",
+    architecture: `flowchart LR
+users["Users / Clients"] --> frontend["Frontend Service"]
+frontend --> api["API Service"]
+api --> db["Datastore"]
+`,
+    architecture_services: `flowchart LR
+users["Users / Clients"] --> frontend["Frontend Service"]
+frontend --> api["API Service"]
+api --> db["Datastore"]
+`,
+    architecture_code: `flowchart LR
+entry["entry"] --> service["service"]
+service --> db["db"]
+`,
+    architecture_iac: `flowchart LR
+iac["IaC Source"] --> deploy["Provisioning / Deploy"]
+deploy --> compute["Compute"]
+`,
+    er: `erDiagram
+    NO_SCHEMA {
+      string note
+    }
+`,
+    call_graph: `flowchart LR
+entry --> service
+`,
+    dependencies: `flowchart LR
+entry --> service
+`,
     terraform_drawio: ""
   },
   onboarding: {

@@ -2046,6 +2046,76 @@ def _classify_external_domain(name: str) -> str:
     return "third_party"
 
 
+def _compact_module_path(path: str, depth: int = 2) -> str:
+    parts = [part for part in str(path).split("/") if part]
+    if len(parts) <= depth:
+        return str(path)
+    return "/".join(parts[-depth:])
+
+
+def _rank_key_service_modules(
+    parsed_files: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    routes: list[dict[str, Any]],
+    entrypoints: list[str],
+    module_role: dict[str, str],
+    *,
+    top_k: int = 3,
+) -> dict[str, list[str]]:
+    module_scores: Counter[str] = Counter()
+
+    for item in parsed_files:
+        path = item.get("path")
+        if isinstance(path, str) and path:
+            module_scores[path] += 1
+
+    for edge in edges:
+        src = edge.get("from", "")
+        dst = edge.get("to", "")
+        if isinstance(src, str) and src.startswith("file:"):
+            module_scores[src.replace("file:", "", 1)] += 1
+        if isinstance(dst, str) and dst.startswith("file:"):
+            module_scores[dst.replace("file:", "", 1)] += 1
+
+    route_files = Counter(
+        route.get("file")
+        for route in routes
+        if isinstance(route.get("file"), str) and route.get("file")
+    )
+    for path, count in route_files.items():
+        module_scores[path] += count * 3
+
+    for entry in entrypoints:
+        if isinstance(entry, str) and entry:
+            module_scores[entry] += 4
+
+    role_members: dict[str, list[str]] = defaultdict(list)
+    for module_id, role in module_role.items():
+        if not module_id.startswith("file:"):
+            continue
+        role_members[role].append(module_id.replace("file:", "", 1))
+
+    role_highlights: dict[str, list[str]] = {}
+    for role, members in role_members.items():
+        ranked = sorted(members, key=lambda module: (-module_scores.get(module, 0), module))
+        compacted: list[str] = []
+        seen: set[str] = set()
+        for module_path in ranked[:top_k]:
+            compact = _compact_module_path(module_path)
+            label = compact if compact not in seen else module_path
+            if label in seen:
+                continue
+            compacted.append(label)
+            seen.add(label)
+        if compacted:
+            role_highlights[role] = compacted
+
+    if "api" not in role_highlights and route_files:
+        role_highlights["api"] = [_compact_module_path(path) for path, _ in route_files.most_common(top_k)]
+
+    return role_highlights
+
+
 def render_service_architecture_mermaid(
     parsed_files: list[dict[str, Any]],
     edges: list[dict[str, Any]],
@@ -2082,12 +2152,27 @@ def render_service_architecture_mermaid(
     if routes or any(fw in API_FRAMEWORKS for fw in frameworks):
         role_counts["api"] = max(1, role_counts["api"])
 
+    role_highlights = _rank_key_service_modules(
+        parsed_files,
+        edges,
+        routes,
+        entrypoints,
+        module_role,
+        top_k=3,
+    )
+
     lines = ["flowchart LR"]
     lines.append('    n_users["Users / Clients"]')
 
     present_roles = [role for role in ("web", "api", "worker", "core") if role_counts.get(role, 0) > 0]
     for role in present_roles:
-        lines.append(f'    {role_to_node[role]}["{role_to_label[role]} ({role_counts[role]})"]')
+        base = f"{role_to_label[role]} ({role_counts[role]})"
+        key_modules = role_highlights.get(role, [])
+        if key_modules:
+            label = _short(f"{base} - key: {', '.join(key_modules)}", 96)
+        else:
+            label = base
+        lines.append(f'    {role_to_node[role]}["{_mermaid_safe_text(label)}"]')
 
     rendered_edges: set[tuple[str, str, str]] = set()
 

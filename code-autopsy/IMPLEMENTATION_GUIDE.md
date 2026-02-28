@@ -70,7 +70,7 @@ With default flags, CLI will:
 - run `npm install` in `code-autopsy/viewer`
 - start `npm run dev -- --port <viewer-port>` if that port is not already in use
 - set `AUTOPSY_OUTPUT_ROOT` for viewer API routes
-- open `http://localhost:<port>/?repo=<repo_name>`
+- open `http://localhost:<port>/?repo=<repo_name>&tab=architecture_services`
 
 Defaults:
 - `--viewer` enabled
@@ -143,15 +143,20 @@ python3 /Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/code-autop
 ```bash
 cd code-autopsy/viewer
 AUTOPSY_OUTPUT_ROOT=/Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/code-autopsy/.autopsy-outputs npm run dev -- --port 3000
+# if Next dev cache is stale, use:
+AUTOPSY_OUTPUT_ROOT=/Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/code-autopsy/.autopsy-outputs npm run dev:clean -- --port 3000
 ```
 
-Open `http://localhost:3000/?repo=<repo_name>`.
+Open `http://localhost:3000/?repo=<repo_name>&tab=architecture_services`.
 
 ## Troubleshooting
 
 - `No autopsy output found`: verify artifacts exist at `code-autopsy/.autopsy-outputs/<repo>/`.
 - viewer repo 404: verify `<repo>/dashboard_state.json` exists.
+- `Cannot find module './9276.js'` (or similar chunk IDs): stale Next build cache. Run:
+  - `cd code-autopsy/viewer && rm -rf .next && AUTOPSY_OUTPUT_ROOT=... npm run dev -- --port 3000`
+  - or `AUTOPSY_OUTPUT_ROOT=... npm run dev:clean -- --port 3000`
 - `Error: watch mode is only supported for local repository paths.`: remove `--watch` when source is a GitHub URL.
 - `PNG export skipped`: install Playwright browser:
   - `cd code-autopsy/viewer && npx playwright install chromium`
-- Mermaid parse issues: regenerate artifacts with latest backend code so label sanitization is refreshed.
+- Mermaid parse issues caused by escaped text (`flowchart LR\n...`): now handled in viewer; if it persists, regenerate artifacts with latest backend code.

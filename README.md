@@ -52,7 +52,7 @@ python3 code-autopsy/scripts/code_autopsy.py <source> --no-viewer --no-open-view
 - output root: `code-autopsy/.autopsy-outputs/<repo_name>/`
 - viewer auto-launch: enabled
 - browser open: enabled
-- viewer URL: `http://localhost:3000/?repo=<repo_name>`
+- viewer URL: `http://localhost:3000/?repo=<repo_name>&tab=architecture_services`
 
 ## Output snapshot
 
