@@ -86,6 +86,8 @@ class XrayConfig:
     output_root: Path
     lang_hints: set[str]
     max_files: int
+    source_reference: str | None = None
+    source_kind: str = "local_path"
 
 
 def _read_text(path: Path) -> str:
@@ -1320,20 +1322,33 @@ def _pick_core_file(module_metrics: list[dict[str, Any]]) -> str | None:
 def _pick_data_file(entities: list[dict[str, Any]], parsed_files: list[dict[str, Any]]) -> str | None:
     if entities:
         source = entities[0].get("source", "")
-        if source:
+        if source and not _is_low_signal_handoff_file(source):
             return source
     for item in parsed_files:
         path = item["path"].lower()
         if any(token in path for token in ("model", "schema", "db", "prisma", "migration")):
-            return item["path"]
+            if not _is_low_signal_handoff_file(item["path"]):
+                return item["path"]
     return None
 
 
-def _pick_test_file(parsed_files: list[dict[str, Any]]) -> str | None:
-    for item in parsed_files:
-        if _is_test_file(item["path"]):
-            return item["path"]
-    return None
+def _is_low_signal_handoff_file(path: str) -> bool:
+    lower = path.lower()
+    if _is_test_file(lower):
+        return True
+    name = Path(lower).name
+    if name in {"__init__.py", "conftest.py"}:
+        return True
+    if "/migrations/" in lower or lower.startswith("migrations/"):
+        return True
+    return False
+
+
+def _pick_entrypoint_file(entrypoints: list[str]) -> str | None:
+    for entry in entrypoints:
+        if not _is_low_signal_handoff_file(entry):
+            return entry
+    return entrypoints[0] if entrypoints else None
 
 
 def build_start_here(
@@ -1345,24 +1360,24 @@ def build_start_here(
 ) -> list[str]:
     picks = []
 
-    if entrypoints:
-        picks.append(entrypoints[0])
+    entry_file = _pick_entrypoint_file(entrypoints)
+    if entry_file:
+        picks.append(entry_file)
 
     route_file = _pick_route_file(routes)
-    if route_file:
+    if route_file and not _is_low_signal_handoff_file(route_file):
         picks.append(route_file)
 
-    core_file = _pick_core_file(module_metrics)
+    core_file = next(
+        (row["module"] for row in module_metrics if not _is_low_signal_handoff_file(row["module"])),
+        _pick_core_file(module_metrics),
+    )
     if core_file:
         picks.append(core_file)
 
     data_file = _pick_data_file(entities, parsed_files)
     if data_file:
         picks.append(data_file)
-
-    test_file = _pick_test_file(parsed_files)
-    if test_file:
-        picks.append(test_file)
 
     dedup = []
     seen = set()
@@ -1373,7 +1388,7 @@ def build_start_here(
 
     if len(dedup) < 5:
         for item in parsed_files:
-            if item["path"] not in seen:
+            if item["path"] not in seen and not _is_low_signal_handoff_file(item["path"]):
                 dedup.append(item["path"])
                 seen.add(item["path"])
             if len(dedup) >= 5:
@@ -2359,6 +2374,364 @@ def render_iac_architecture_mermaid(iac: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_architecture_plantuml(
+    parsed_files: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    frameworks: list[str],
+    routes: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+    entrypoints: list[str],
+) -> str:
+    lines = [
+        "@startuml",
+        "left to right direction",
+        "skinparam componentStyle rectangle",
+    ]
+    module_layers: dict[str, str] = {}
+    layer_counts = Counter()
+    for item in parsed_files:
+        module_id = f"file:{item['path']}"
+        layer = _classify_arch_layer(item["path"])
+        module_layers[module_id] = layer
+        if layer != "config":
+            layer_counts[layer] += 1
+
+    if "Next.js" in frameworks:
+        layer_counts["web"] = max(1, layer_counts["web"])
+    if routes or any(fw in API_FRAMEWORKS for fw in frameworks):
+        layer_counts["api"] = max(1, layer_counts["api"])
+    if entrypoints and layer_counts["core"] == 0:
+        layer_counts["core"] = 1
+
+    layer_nodes = {
+        "web": "n_web_app",
+        "api": "n_api_service",
+        "worker": "n_worker",
+        "core": "n_core",
+    }
+    layer_titles = {
+        "web": "Web App",
+        "api": "API Service",
+        "worker": "Worker",
+        "core": "Core Modules",
+    }
+
+    lines.append('actor "Client / Browser" as n_client')
+    present_layers = [layer for layer in ("web", "api", "worker", "core") if layer_counts.get(layer, 0) > 0]
+    for layer in present_layers:
+        count = layer_counts[layer]
+        title = f"{layer_titles[layer]} ({count})"
+        lines.append(f'component "{_plantuml_safe_text(title)}" as {layer_nodes[layer]}')
+
+    has_datastore = bool(entities)
+    if has_datastore:
+        lines.append('database "Datastore" as n_datastore')
+
+    external_by_layer: dict[str, Counter] = defaultdict(Counter)
+    cross_layer_counts: Counter = Counter()
+    for edge in edges:
+        if not edge["from"].startswith("file:"):
+            continue
+        src_layer = module_layers.get(edge["from"])
+        if not src_layer or src_layer == "config":
+            continue
+        target = edge["to"]
+        if target.startswith("file:"):
+            dst_layer = module_layers.get(target)
+            if dst_layer and dst_layer != src_layer and dst_layer != "config":
+                cross_layer_counts[(src_layer, dst_layer, edge["type"])] += 1
+        elif target.startswith("external:"):
+            external_by_layer[src_layer][target.replace("external:", "")] += 1
+
+    rendered_edges: set[tuple[str, str, str]] = set()
+
+    def add_edge(src: str, dst: str, label: str) -> None:
+        key = (src, dst, label)
+        if key in rendered_edges:
+            return
+        rendered_edges.add(key)
+        lines.append(f"{src} --> {dst} : {_plantuml_edge_label(label)}")
+
+    if "web" in present_layers:
+        add_edge("n_client", layer_nodes["web"], "request")
+    elif "api" in present_layers:
+        add_edge("n_client", layer_nodes["api"], "request")
+    elif "core" in present_layers:
+        add_edge("n_client", layer_nodes["core"], "request")
+
+    if "web" in present_layers and "api" in present_layers:
+        add_edge(layer_nodes["web"], layer_nodes["api"], "api_call")
+
+    for src_layer, dst_layer, edge_type in sorted(cross_layer_counts.keys()):
+        if src_layer in layer_nodes and dst_layer in layer_nodes:
+            if src_layer in present_layers and dst_layer in present_layers:
+                add_edge(layer_nodes[src_layer], layer_nodes[dst_layer], edge_type)
+
+    if has_datastore:
+        if "api" in present_layers:
+            add_edge(layer_nodes["api"], "n_datastore", "read_write")
+        elif "core" in present_layers:
+            add_edge(layer_nodes["core"], "n_datastore", "read_write")
+        elif "worker" in present_layers:
+            add_edge(layer_nodes["worker"], "n_datastore", "read_write")
+
+    external_totals = Counter()
+    for counter in external_by_layer.values():
+        external_totals.update(counter)
+    top_externals = [name for name, _ in external_totals.most_common(8)]
+    for ext in top_externals:
+        ext_id = _sanitize(f"external:{ext}")
+        lines.append(f'cloud "{_short(_plantuml_safe_text(ext), 34)}" as {ext_id}')
+        for layer in present_layers:
+            count = external_by_layer[layer].get(ext, 0)
+            if count > 0 and layer in layer_nodes:
+                add_edge(layer_nodes[layer], ext_id, "depends_on")
+
+    if routes and "api" in present_layers:
+        route_node_id = "n_routes"
+        lines.append(f'component "Routes ({len(routes)})" as {route_node_id}')
+        add_edge(layer_nodes["api"], route_node_id, "serves")
+
+    if entrypoints:
+        entry_id = "n_entrypoints"
+        lines.append(f'component "Entrypoints ({len(entrypoints)})" as {entry_id}')
+        if "api" in present_layers:
+            add_edge(entry_id, layer_nodes["api"], "boot")
+        elif "web" in present_layers:
+            add_edge(entry_id, layer_nodes["web"], "boot")
+        elif "core" in present_layers:
+            add_edge(entry_id, layer_nodes["core"], "boot")
+
+    lines.append("@enduml")
+    return "\n".join(lines) + "\n"
+
+
+def render_service_architecture_plantuml(
+    parsed_files: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    frameworks: list[str],
+    routes: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+    entrypoints: list[str],
+) -> str:
+    role_to_node = {
+        "web": "n_service_frontend",
+        "api": "n_service_api",
+        "worker": "n_service_worker",
+        "core": "n_service_shared",
+    }
+    role_to_label = {
+        "web": "Frontend Service",
+        "api": "API Service",
+        "worker": "Worker Service",
+        "core": "Shared/Core Service",
+    }
+
+    module_role: dict[str, str] = {}
+    role_counts = Counter()
+    for item in parsed_files:
+        role = _classify_arch_layer(item["path"])
+        if role == "config":
+            continue
+        module_id = f"file:{item['path']}"
+        module_role[module_id] = role
+        role_counts[role] += 1
+
+    if "Next.js" in frameworks:
+        role_counts["web"] = max(1, role_counts["web"])
+    if routes or any(fw in API_FRAMEWORKS for fw in frameworks):
+        role_counts["api"] = max(1, role_counts["api"])
+
+    role_highlights = _rank_key_service_modules(
+        parsed_files,
+        edges,
+        routes,
+        entrypoints,
+        module_role,
+        top_k=3,
+    )
+
+    lines = [
+        "@startuml",
+        "left to right direction",
+        "skinparam componentStyle rectangle",
+        'actor "Users / Clients" as n_users',
+    ]
+
+    present_roles = [role for role in ("web", "api", "worker", "core") if role_counts.get(role, 0) > 0]
+    for role in present_roles:
+        base = f"{role_to_label[role]} ({role_counts[role]})"
+        key_modules = role_highlights.get(role, [])
+        if key_modules:
+            label = _short(f"{base} - key: {', '.join(key_modules)}", 96)
+        else:
+            label = base
+        lines.append(f'component "{_plantuml_safe_text(label)}" as {role_to_node[role]}')
+
+    rendered_edges: set[tuple[str, str, str]] = set()
+
+    def add_edge(src: str, dst: str, label: str) -> None:
+        key = (src, dst, label)
+        if key in rendered_edges:
+            return
+        rendered_edges.add(key)
+        lines.append(f"{src} --> {dst} : {_plantuml_edge_label(label)}")
+
+    if "web" in present_roles:
+        add_edge("n_users", role_to_node["web"], "http")
+    elif "api" in present_roles:
+        add_edge("n_users", role_to_node["api"], "http")
+    elif "core" in present_roles:
+        add_edge("n_users", role_to_node["core"], "request")
+
+    if "web" in present_roles and "api" in present_roles:
+        add_edge(role_to_node["web"], role_to_node["api"], "api_calls")
+    if "api" in present_roles and "core" in present_roles:
+        add_edge(role_to_node["api"], role_to_node["core"], "business_logic")
+    if "worker" in present_roles and "api" in present_roles:
+        add_edge(role_to_node["api"], role_to_node["worker"], "async_jobs")
+
+    role_domain_counts: dict[str, Counter] = defaultdict(Counter)
+    cross_role_edges = Counter()
+    for edge in edges:
+        if not edge["from"].startswith("file:"):
+            continue
+        from_role = module_role.get(edge["from"])
+        if not from_role:
+            continue
+
+        if edge["to"].startswith("file:"):
+            to_role = module_role.get(edge["to"])
+            if to_role and to_role != from_role:
+                cross_role_edges[(from_role, to_role)] += 1
+        elif edge["to"].startswith("external:"):
+            domain = _classify_external_domain(edge["to"].replace("external:", ""))
+            role_domain_counts[from_role][domain] += 1
+
+    for (from_role, to_role), count in sorted(cross_role_edges.items()):
+        if from_role in role_to_node and to_role in role_to_node and from_role in present_roles and to_role in present_roles:
+            add_edge(role_to_node[from_role], role_to_node[to_role], f"calls_{count}")
+
+    if entities:
+        role_domain_counts["api"]["datastore"] += len(entities)
+        if "worker" in present_roles:
+            role_domain_counts["worker"]["datastore"] += len(entities)
+
+    domain_to_node = {
+        "datastore": "n_domain_data",
+        "messaging": "n_domain_msg",
+        "auth": "n_domain_auth",
+        "observability": "n_domain_obs",
+        "third_party": "n_domain_3p",
+    }
+    domain_to_label = {
+        "datastore": "Datastore",
+        "messaging": "Message Broker",
+        "auth": "Auth Provider",
+        "observability": "Observability",
+        "third_party": "Third-party APIs",
+    }
+
+    present_domains: set[str] = set()
+    for domain_counts in role_domain_counts.values():
+        for domain, count in domain_counts.items():
+            if count > 0:
+                present_domains.add(domain)
+
+    for domain in ("datastore", "messaging", "auth", "observability", "third_party"):
+        if domain in present_domains:
+            keyword = "database" if domain == "datastore" else "cloud"
+            lines.append(f'{keyword} "{domain_to_label[domain]}" as {domain_to_node[domain]}')
+
+    for role in present_roles:
+        for domain, count in role_domain_counts.get(role, Counter()).items():
+            if count > 0 and domain in domain_to_node:
+                add_edge(role_to_node[role], domain_to_node[domain], f"uses_{count}")
+
+    if routes and "api" in present_roles:
+        lines.append(f'component "API Routes ({len(routes)})" as n_service_routes')
+        add_edge(role_to_node["api"], "n_service_routes", "exposes")
+    if entrypoints:
+        lines.append(f'component "Entrypoints ({len(entrypoints)})" as n_service_entry')
+        if "api" in present_roles:
+            add_edge("n_service_entry", role_to_node["api"], "boot")
+        elif "web" in present_roles:
+            add_edge("n_service_entry", role_to_node["web"], "boot")
+        elif "core" in present_roles:
+            add_edge("n_service_entry", role_to_node["core"], "boot")
+
+    lines.append("@enduml")
+    return "\n".join(lines) + "\n"
+
+
+def render_iac_architecture_plantuml(iac: dict[str, Any]) -> str:
+    resources = iac.get("resources", []) if isinstance(iac, dict) else []
+    layer_counts = dict(iac.get("layer_counts") or {}) if isinstance(iac, dict) else {}
+    provider_counts = Counter(iac.get("providers") or {}) if isinstance(iac, dict) else Counter()
+    source_types = sorted((iac.get("source_types") or {}).keys()) if isinstance(iac, dict) else []
+
+    if not resources:
+        return (
+            "@startuml\n"
+            "left to right direction\n"
+            "skinparam componentStyle rectangle\n"
+            'component "No IaC Artifacts Detected" as n_no_iac\n'
+            'note right of n_no_iac : Scan Terraform/CloudFormation/Kubernetes/Compose/Bicep files\n'
+            "@enduml\n"
+        )
+
+    lines = [
+        "@startuml",
+        "left to right direction",
+        "skinparam componentStyle rectangle",
+    ]
+    source_label = "IaC Source"
+    if source_types:
+        source_label = f"IaC Source ({', '.join(source_types)})"
+    lines.append(f'component "{_plantuml_safe_text(_short(source_label, 60))}" as n_iac')
+    lines.append('component "Provisioning / Deploy" as n_pipeline')
+    lines.append("n_iac --> n_pipeline : plan_apply")
+
+    layer_nodes = {
+        "network": "n_layer_network",
+        "security": "n_layer_security",
+        "compute": "n_layer_compute",
+        "data": "n_layer_data",
+        "observability": "n_layer_observability",
+        "platform": "n_layer_platform",
+    }
+    layer_labels = {
+        "network": "Network",
+        "security": "Security / IAM",
+        "compute": "Compute / Runtime",
+        "data": "Data Stores",
+        "observability": "Observability",
+        "platform": "Platform",
+    }
+
+    present_layers = [layer for layer in layer_nodes if dict(layer_counts).get(layer, 0) > 0]
+    for layer in present_layers:
+        count = layer_counts.get(layer, 0)
+        lines.append(f'component "{layer_labels[layer]} ({count})" as {layer_nodes[layer]}')
+        lines.append(f"n_pipeline --> {layer_nodes[layer]} : manages_{count}")
+
+    if "compute" in present_layers and "data" in present_layers:
+        lines.append(f"{layer_nodes['compute']} --> {layer_nodes['data']} : reads_writes")
+    if "security" in present_layers and "compute" in present_layers:
+        lines.append(f"{layer_nodes['security']} --> {layer_nodes['compute']} : guards")
+    if "network" in present_layers and "compute" in present_layers:
+        lines.append(f"{layer_nodes['network']} --> {layer_nodes['compute']} : routes_to")
+
+    top_providers = [name for name, _ in provider_counts.most_common(8)]
+    for provider in top_providers:
+        provider_id = _sanitize(f"iac_provider:{provider}")
+        lines.append(f'cloud "{_plantuml_safe_text(provider)}" as {provider_id}')
+        lines.append(f"n_pipeline --> {provider_id} : provider")
+
+    lines.append("@enduml")
+    return "\n".join(lines) + "\n"
+
+
 def render_dependency_mermaid(
     nodes: list[dict[str, Any]],
     edges: list[dict[str, Any]],
@@ -2391,6 +2764,56 @@ def render_dependency_mermaid(
         if node["type"] == "external":
             lines.append(f"    class {_sanitize(node['id'])} external;")
 
+    return "\n".join(lines) + "\n"
+
+
+def render_dependency_plantuml(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    cycles: list[list[str]],
+) -> str:
+    cycle_nodes = {node for component in cycles for node in component}
+    lines = [
+        "@startuml",
+        "left to right direction",
+        "skinparam componentStyle rectangle",
+        "skinparam component<<cycle>> {",
+        "  BackgroundColor #fca5a5",
+        "  BorderColor #7f1d1d",
+        "}",
+        "skinparam component<<external>> {",
+        "  BackgroundColor #94a3b8",
+        "  BorderColor #334155",
+        "}",
+    ]
+    declared: set[str] = set()
+    for node in nodes:
+        if node["type"] not in {"module", "external"}:
+            continue
+        alias = _sanitize(node["id"])
+        if alias in declared:
+            continue
+        declared.add(alias)
+        stereotypes: list[str] = []
+        if node["id"] in cycle_nodes:
+            stereotypes.append("cycle")
+        if node["type"] == "external":
+            stereotypes.append("external")
+        stereotype = f" {' '.join(f'<<{item}>>' for item in stereotypes)}" if stereotypes else ""
+        lines.append(f'component "{_short(_plantuml_safe_text(node["label"]), 36)}" as {alias}{stereotype}')
+
+    for edge in edges:
+        if edge["type"] not in {"imports", "depends_on", "trust_boundary_crossing"}:
+            continue
+        if not edge["from"].startswith("file:"):
+            continue
+        if not (edge["to"].startswith("file:") or edge["to"].startswith("external:")):
+            continue
+        src = _sanitize(edge["from"])
+        dst = _sanitize(edge["to"])
+        lines.append(f"{src} --> {dst} : {_plantuml_edge_label(edge['type'], edge.get('confidence'))}")
+
+    lines.append("@enduml")
     return "\n".join(lines) + "\n"
 
 
@@ -2431,6 +2854,47 @@ def render_call_mermaid(function_calls: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_call_plantuml(function_calls: list[dict[str, Any]]) -> str:
+    lines = [
+        "@startuml",
+        "left to right direction",
+        "skinparam componentStyle rectangle",
+    ]
+    deduped: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+    for edge in function_calls:
+        key = (edge.get("from", ""), edge.get("to", ""), edge.get("confidence", ""))
+        if key in seen_edges:
+            continue
+        seen_edges.add(key)
+        deduped.append(edge)
+        if len(deduped) >= 120:
+            break
+    edges = deduped
+
+    seen: set[str] = set()
+    for edge in edges:
+        source = _sanitize(edge["from"])
+        target = _sanitize(edge["to"])
+        if source not in seen:
+            source_label = _display_call_node_label(edge["from"])
+            lines.append(f'component "{_short(_plantuml_safe_text(source_label), 30)}" as {source}')
+            seen.add(source)
+        if target not in seen:
+            target_label = _display_call_node_label(edge["to"])
+            lines.append(f'component "{_short(_plantuml_safe_text(target_label), 30)}" as {target}')
+            seen.add(target)
+
+        label = _plantuml_edge_label("calls", edge.get("confidence"))
+        lines.append(f"{source} --> {target} : {label}")
+
+    if len(edges) == 0:
+        lines.append('component "No call graph data detected" as no_calls')
+
+    lines.append("@enduml")
+    return "\n".join(lines) + "\n"
+
+
 def render_er_mermaid(entities: list[dict[str, Any]], relationships: list[dict[str, Any]]) -> str:
     if not entities:
         return "erDiagram\n    NO_SCHEMA {\n      string note\n    }\n"
@@ -2451,6 +2915,49 @@ def render_er_mermaid(entities: list[dict[str, Any]], relationships: list[dict[s
         if left and right:
             lines.append(f"    {left} ||--o{{ {right} : {relation.get('type', 'rel')}")
 
+    return "\n".join(lines) + "\n"
+
+
+def render_er_plantuml(entities: list[dict[str, Any]], relationships: list[dict[str, Any]]) -> str:
+    if not entities:
+        return (
+            "@startuml\n"
+            "hide circle\n"
+            "skinparam classAttributeIconSize 0\n"
+            'class "NO_SCHEMA" as no_schema {\n'
+            "  note : No schema detected\n"
+            "}\n"
+            "@enduml\n"
+        )
+
+    lines = [
+        "@startuml",
+        "hide circle",
+        "skinparam classAttributeIconSize 0",
+    ]
+
+    entity_aliases: dict[str, str] = {}
+    for entity in entities:
+        name = str(entity.get("name") or "Entity")
+        alias = _sanitize(f"entity:{name}")
+        entity_aliases[name] = alias
+        lines.append(f'class "{_plantuml_safe_text(name)}" as {alias} {{')
+        for field in entity.get("fields", [])[:12]:
+            field_name = _plantuml_safe_text(field.get("name", "field"))
+            field_type = str(field.get("type", "string")).lower()
+            if field_type not in SQL_SCALARS:
+                field_type = "string"
+            lines.append(f"  {field_name} : {field_type}")
+        lines.append("}")
+
+    for relation in relationships:
+        left = str(relation.get("from", "")).strip()
+        right = str(relation.get("to", "")).strip()
+        if left and right and left in entity_aliases and right in entity_aliases:
+            rel_type = _plantuml_edge_label(relation.get("type", "rel"))
+            lines.append(f"{entity_aliases[left]} --> {entity_aliases[right]} : {rel_type}")
+
+    lines.append("@enduml")
     return "\n".join(lines) + "\n"
 
 
@@ -2477,14 +2984,313 @@ def render_dbml(entities: list[dict[str, Any]], relationships: list[dict[str, An
     return "\n".join(lines).strip() + "\n"
 
 
+def build_data_snapshot(
+    summary: dict[str, Any],
+    routes: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+    relationships: list[dict[str, Any]],
+    module_metrics: list[dict[str, Any]],
+    function_hotspots: list[dict[str, Any]],
+    cycles: list[list[str]],
+    iac: dict[str, Any],
+) -> dict[str, Any]:
+    route_rows = []
+    for route in routes[:20]:
+        route_rows.append(
+            {
+                "method": route.get("method", "GET"),
+                "path": route.get("path", "/"),
+                "file": route.get("file", "unknown"),
+            }
+        )
+
+    entity_rows = []
+    for entity in entities[:20]:
+        field_names = [field.get("name", "field") for field in entity.get("fields", [])[:10]]
+        entity_rows.append(
+            {
+                "name": entity.get("name", "Entity"),
+                "source": entity.get("source", "unknown"),
+                "format": entity.get("format", "unknown"),
+                "fields": field_names,
+            }
+        )
+
+    relationship_rows = []
+    for relation in relationships[:30]:
+        relationship_rows.append(
+            {
+                "from": relation.get("from", ""),
+                "to": relation.get("to", ""),
+                "type": relation.get("type", "rel"),
+                "confidence": relation.get("confidence", "medium"),
+            }
+        )
+
+    hotspot_rows = []
+    for row in module_metrics[:20]:
+        hotspot_rows.append(
+            {
+                "module": row["module"],
+                "hotspot_score": round(float(row["hotspot_score"]), 2),
+                "coupling_in": row["coupling_in"],
+                "coupling_out": row["coupling_out"],
+            }
+        )
+
+    function_rows = []
+    for row in function_hotspots[:20]:
+        function_rows.append(
+            {
+                "function": row["function"],
+                "fan_in": row["fan_in"],
+                "fan_out": row["fan_out"],
+                "hotspot_score": round(float(row["hotspot_score"]), 2),
+            }
+        )
+
+    cycle_rows = []
+    for component in cycles[:12]:
+        cycle_rows.append(component[:8])
+
+    return {
+        "repo": {
+            "name": summary.get("repo_name", "repository"),
+            "generated_at": summary.get("generated_at", ""),
+            "languages": summary.get("languages", []),
+            "frameworks": summary.get("frameworks", []),
+            "entrypoints": summary.get("entrypoints", []),
+            "files_indexed": summary.get("files_indexed", 0),
+            "files_skipped": summary.get("files_skipped", 0),
+        },
+        "analysis": {
+            "routes": route_rows,
+            "entities": entity_rows,
+            "relationships": relationship_rows,
+            "hotspots": hotspot_rows,
+            "function_hotspots": function_rows,
+            "cycles": cycle_rows,
+            "iac": {
+                "files": len(iac.get("files", [])),
+                "resources": len(iac.get("resources", [])),
+                "providers": dict(iac.get("providers", {})),
+                "layer_counts": dict(iac.get("layer_counts", {})),
+            },
+        },
+    }
+
+
+def _yaml_scalar(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return json.dumps(str(value))
+        return str(value)
+    return json.dumps(str(value))
+
+
+def _render_yaml_lines(value: Any, indent: int = 0) -> list[str]:
+    prefix = "  " * indent
+    if isinstance(value, dict):
+        if not value:
+            return [f"{prefix}{{}}"]
+        lines: list[str] = []
+        for key in sorted(value.keys()):
+            key_text = str(key)
+            child = value[key]
+            if isinstance(child, (dict, list)):
+                lines.append(f"{prefix}{key_text}:")
+                lines.extend(_render_yaml_lines(child, indent + 1))
+            else:
+                lines.append(f"{prefix}{key_text}: {_yaml_scalar(child)}")
+        return lines
+    if isinstance(value, list):
+        if not value:
+            return [f"{prefix}[]"]
+        lines: list[str] = []
+        for child in value:
+            if isinstance(child, (dict, list)):
+                lines.append(f"{prefix}-")
+                lines.extend(_render_yaml_lines(child, indent + 1))
+            else:
+                lines.append(f"{prefix}- {_yaml_scalar(child)}")
+        return lines
+    return [f"{prefix}{_yaml_scalar(value)}"]
+
+
+def render_data_yaml(payload: dict[str, Any]) -> str:
+    return "\n".join(_render_yaml_lines(payload)) + "\n"
+
+
+def render_json_plantuml(json_source: str) -> str:
+    lines = ["@startjson"]
+    lines.extend(json_source.strip().splitlines())
+    lines.append("@endjson")
+    return "\n".join(lines) + "\n"
+
+
+def render_yaml_plantuml(yaml_source: str) -> str:
+    lines = ["@startyaml"]
+    lines.extend(yaml_source.strip().splitlines())
+    lines.append("@endyaml")
+    return "\n".join(lines) + "\n"
+
+
+def render_sequence_mermaid(
+    routes: list[dict[str, Any]],
+    key_flows: list[dict[str, str]],
+    entities: list[dict[str, Any]],
+) -> str:
+    datastore = entities[0]["name"] if entities else "Datastore"
+    lines = [
+        "sequenceDiagram",
+        "    autonumber",
+        "    actor Client",
+        "    participant Edge as API / Entrypoint",
+        "    participant App as App Core",
+        f"    participant Data as {_mermaid_safe_text(datastore)}",
+    ]
+
+    scenario_count = max(len(routes[:6]), len(key_flows[:6]))
+    if scenario_count == 0:
+        scenario_count = 1
+
+    for idx in range(scenario_count):
+        route = routes[idx] if idx < len(routes) else None
+        flow = key_flows[idx] if idx < len(key_flows) else None
+        method = route.get("method", "REQUEST") if route else "REQUEST"
+        path = route.get("path", "/") if route else "/"
+        file_name = Path(route.get("file", "handler")).name if route else "entrypoint"
+        flow_name = flow.get("name", f"{method} {path}") if flow else f"{method} {path}"
+        lines.append(f"    Note over Client,Edge: {_mermaid_safe_text(_short(flow_name, 90))}")
+        lines.append(f"    Client->>Edge: {_mermaid_safe_text(method)} {_mermaid_safe_text(path)}")
+        lines.append(f"    Edge->>App: handle {_mermaid_safe_text(file_name)}")
+        lines.append(f"    App->>Data: read_write {_mermaid_safe_text(datastore)}")
+        lines.append("    Data-->>App: data result")
+        lines.append("    App-->>Edge: response payload")
+        lines.append("    Edge-->>Client: HTTP response")
+
+    return "\n".join(lines) + "\n"
+
+
+def render_sequence_plantuml(
+    routes: list[dict[str, Any]],
+    key_flows: list[dict[str, str]],
+    entities: list[dict[str, Any]],
+) -> str:
+    datastore = entities[0]["name"] if entities else "Datastore"
+    lines = [
+        "@startuml",
+        "autonumber",
+        'actor "Client" as client',
+        'participant "API / Entrypoint" as edge',
+        'participant "App Core" as app',
+        f'participant "{_plantuml_safe_text(_short(datastore, 40))}" as data',
+    ]
+
+    scenario_count = max(len(routes[:6]), len(key_flows[:6]))
+    if scenario_count == 0:
+        scenario_count = 1
+
+    for idx in range(scenario_count):
+        route = routes[idx] if idx < len(routes) else None
+        flow = key_flows[idx] if idx < len(key_flows) else None
+        method = route.get("method", "REQUEST") if route else "REQUEST"
+        path = route.get("path", "/") if route else "/"
+        file_name = Path(route.get("file", "handler")).name if route else "entrypoint"
+        flow_name = flow.get("name", f"{method} {path}") if flow else f"{method} {path}"
+        lines.append(f'note over client,edge : {_plantuml_safe_text(_short(flow_name, 92))}')
+        lines.append(f'client -> edge : {_plantuml_safe_text(method)} {_plantuml_safe_text(path)}')
+        lines.append(f'edge -> app : handle {_plantuml_safe_text(file_name)}')
+        lines.append(f'app -> data : read_write {_plantuml_safe_text(datastore)}')
+        lines.append("data --> app : data result")
+        lines.append("app --> edge : response payload")
+        lines.append("edge --> client : HTTP response")
+
+    lines.append("@enduml")
+    return "\n".join(lines) + "\n"
+
+
+def render_use_case_mermaid(routes: list[dict[str, Any]], entrypoints: list[str]) -> str:
+    lines = [
+        "flowchart LR",
+        '    actor_client["User / Client"]',
+    ]
+    route_rows = routes[:14]
+    if route_rows:
+        for idx, route in enumerate(route_rows):
+            node = f"uc_{idx}"
+            method = route.get("method", "GET")
+            path = route.get("path", "/")
+            label = _short(f"{method} {path}", 48)
+            lines.append(f'    {node}(["{_mermaid_safe_text(label)}"])')
+            lines.append(f"    actor_client --> {node}")
+    else:
+        lines.append('    uc_default(["Access application capability"])')
+        lines.append("    actor_client --> uc_default")
+
+    if entrypoints:
+        lines.append('    actor_operator["Operator / Developer"]')
+        lines.append('    uc_boot(["Bootstrap runtime"])')
+        lines.append("    actor_operator --> uc_boot")
+
+    return "\n".join(lines) + "\n"
+
+
+def render_use_case_plantuml(routes: list[dict[str, Any]], entrypoints: list[str]) -> str:
+    lines = [
+        "@startuml",
+        "left to right direction",
+        'actor "User / Client" as actor_client',
+    ]
+
+    route_rows = routes[:14]
+    if route_rows:
+        for idx, route in enumerate(route_rows):
+            method = route.get("method", "GET")
+            path = route.get("path", "/")
+            label = _short(f"{method} {path}", 64)
+            alias = f"uc_{idx}"
+            lines.append(f'usecase "{_plantuml_safe_text(label)}" as {alias}')
+            lines.append(f"actor_client --> {alias}")
+    else:
+        lines.append('usecase "Access application capability" as uc_default')
+        lines.append("actor_client --> uc_default")
+
+    if entrypoints:
+        lines.append('actor "Operator / Developer" as actor_operator')
+        lines.append('usecase "Bootstrap runtime" as uc_boot')
+        lines.append("actor_operator --> uc_boot")
+
+    lines.append("@enduml")
+    return "\n".join(lines) + "\n"
+
+
 def build_key_flows(
     routes: list[dict[str, Any]],
     module_call_edges: list[dict[str, Any]],
     entities: list[dict[str, Any]],
+    entrypoints: list[str],
+    module_metrics: list[dict[str, Any]],
+    parsed_files: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
     by_source = defaultdict(list)
     for edge in module_call_edges:
-        by_source[edge["from"]].append(edge["to"])
+        by_source[edge["from"]].append((edge["to"], edge.get("confidence", "medium")))
+
+    for source in list(by_source.keys()):
+        by_source[source] = sorted(
+            by_source[source],
+            key=lambda item: (
+                item[1] != "high",
+                item[1] != "medium",
+                item[0].startswith("external_fn:"),
+                item[0],
+            ),
+        )
 
     data_target = entities[0]["name"] if entities else "datastore"
 
@@ -2493,7 +3299,7 @@ def build_key_flows(
         source = route["file"]
         candidates = by_source[source]
         if candidates:
-            preferred = next((value for value in candidates if not value.startswith("external_fn:")), candidates[0])
+            preferred = next((value for value, _ in candidates if not value.startswith("external_fn:")), candidates[0][0])
             middle = _display_flow_target(preferred)
         else:
             middle = source
@@ -2505,8 +3311,62 @@ def build_key_flows(
         )
 
     if not flows:
-        flows.append({"name": "default", "flow": "Request -> Entry -> Core Module -> Datastore"})
-    return flows
+        seed_candidates: list[str] = []
+        for entry in entrypoints:
+            if entry and not _is_low_signal_handoff_file(entry):
+                seed_candidates.append(entry)
+        for row in module_metrics[:12]:
+            module_name = row.get("module")
+            if module_name and not _is_low_signal_handoff_file(module_name):
+                seed_candidates.append(module_name)
+        if not seed_candidates:
+            for item in parsed_files:
+                path = item.get("path", "")
+                if path and not _is_low_signal_handoff_file(path):
+                    seed_candidates.append(path)
+
+        seen_seeds: set[str] = set()
+        deduped_seeds: list[str] = []
+        for seed in seed_candidates:
+            if seed not in seen_seeds:
+                deduped_seeds.append(seed)
+                seen_seeds.add(seed)
+            if len(deduped_seeds) >= 4:
+                break
+
+        for seed in deduped_seeds:
+            chain = ["Request", seed]
+            current = seed
+            seen_nodes = {seed}
+            for _ in range(3):
+                candidates = by_source.get(current, [])
+                if not candidates:
+                    break
+                selected = None
+                for target, _confidence in candidates:
+                    target_name = _display_flow_target(target)
+                    if target_name in seen_nodes:
+                        continue
+                    if target.startswith("external_fn:") or not _is_low_signal_handoff_file(target):
+                        selected = target
+                        break
+                if selected is None:
+                    break
+                target_label = _display_flow_target(selected)
+                chain.append(target_label)
+                if selected.startswith("external_fn:"):
+                    break
+                seen_nodes.add(target_label)
+                current = selected
+            if chain[-1] != data_target:
+                chain.append(data_target)
+            flow_name = f"Runtime path: {Path(seed).name}"
+            flows.append({"name": flow_name, "flow": " -> ".join(chain)})
+
+    if not flows:
+        fallback = entrypoints[0] if entrypoints else "entrypoint"
+        flows.append({"name": "default", "flow": f"Request -> {fallback} -> {data_target}"})
+    return flows[:8]
 
 
 def render_onboarding_markdown(
@@ -2515,7 +3375,7 @@ def render_onboarding_markdown(
     glossary: list[dict[str, str]],
     change_safely: dict[str, Any],
 ) -> str:
-    lines = ["# Onboarding Map", "", "## Start Here (5 files)", ""]
+    lines = ["# Onboarding Map", "", f"## Start Here ({len(start_here)} files)", ""]
     for idx, path in enumerate(start_here, start=1):
         lines.append(f"{idx}. `{path}`")
 
@@ -2574,9 +3434,25 @@ def render_index_markdown(summary: dict[str, Any], terraform_drawio_file: str | 
         "- [ER Diagram](er.mmd)",
         "- [Call Graph](call-graph.mmd)",
         "- [Dependency Graph](dependencies.mmd)",
+        "- [Sequence Diagram](sequence.mmd)",
+        "- [Use Case Diagram](use-case.mmd)",
+        "- [Architecture (Services, PlantUML)](architecture-services.puml)",
+        "- [Architecture (Code, PlantUML)](architecture-code.puml)",
+        "- [Architecture (IaC, PlantUML)](architecture-iac.puml)",
+        "- [System Architecture (PlantUML)](architecture.puml)",
+        "- [ER Diagram (PlantUML)](er.puml)",
+        "- [Call Graph (PlantUML)](call-graph.puml)",
+        "- [Dependency Graph (PlantUML)](dependencies.puml)",
+        "- [Sequence Diagram (PlantUML)](sequence.puml)",
+        "- [Use Case Diagram (PlantUML)](use-case.puml)",
+        "- [JSON Data Snapshot](data.json)",
+        "- [YAML Data Snapshot](data.yaml)",
+        "- [JSON Data (PlantUML)](json-data.puml)",
+        "- [YAML Data (PlantUML)](yaml-data.puml)",
         "- [Onboarding Map](onboarding.md)",
         "- [Repo Summary](repo-summary.md)",
         "- [Top Files](top-files.md)",
+        "- [Handoff Brief](handoff.md)",
         "- [Dashboard State](dashboard_state.json)",
         "",
         "## Notes",
@@ -2645,6 +3521,37 @@ def _mermaid_edge_label(edge_type: str, confidence: str | None = None) -> str:
     if conf_token:
         return f"{edge_token}_{conf_token}"
     return edge_token
+
+
+def _plantuml_safe_text(value: Any) -> str:
+    text = str(value)
+    text = text.replace("\n", " ").replace("\r", " ")
+    text = text.replace('"', "'")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _plantuml_edge_label(edge_type: Any, confidence: Any = None) -> str:
+    edge_token = re.sub(r"[^a-zA-Z0-9]+", "_", str(edge_type or "rel")).strip("_").lower()
+    conf_token = re.sub(r"[^a-zA-Z0-9]+", "_", str(confidence or "")).strip("_").lower()
+    if conf_token:
+        return f"{edge_token}_{conf_token}"
+    return edge_token
+
+
+def _ensure_required_plantuml(diagram: str, title: str) -> str:
+    source = (diagram or "").strip()
+    if source.startswith("@start") and source.endswith("@enduml"):
+        return source + "\n"
+    if source.startswith("@start"):
+        return source + "\n"
+    return (
+        "@startuml\n"
+        "left to right direction\n"
+        "skinparam componentStyle rectangle\n"
+        f'component "{_plantuml_safe_text(title)} unavailable" as n_missing\n'
+        "@enduml\n"
+    )
 
 
 def _display_call_node_label(raw: str) -> str:
@@ -2717,6 +3624,86 @@ def render_repo_summary_markdown(
     return "\n".join(lines) + "\n"
 
 
+def render_handoff_markdown(
+    summary: dict[str, Any],
+    start_here: list[str],
+    key_flows: list[dict[str, str]],
+    module_metrics: list[dict[str, Any]],
+    routes: list[dict[str, Any]],
+    parser_errors: list[str],
+    required_artifact_status: dict[str, bool],
+) -> str:
+    lines = [
+        "# Handoff Brief",
+        "",
+        "## Open First",
+        "",
+        "1. `index.md`",
+        "2. `onboarding.md`",
+        "3. `repo-summary.md`",
+        "4. `dashboard_state.json`",
+        "",
+        "## Quick Context",
+        "",
+        f"- Repository: `{summary.get('repo_name', 'unknown')}`",
+        f"- Source Reference: `{summary.get('repo_root', 'unknown')}`",
+        f"- Source Kind: `{summary.get('source_kind', 'unknown')}`",
+        f"- Files Indexed: {summary.get('files_indexed', 0)}",
+        f"- Files Skipped: {summary.get('files_skipped', 0)}",
+        "",
+        "## Architecture Ramp (Start Here)",
+        "",
+    ]
+
+    if start_here:
+        for idx, path in enumerate(start_here[:5], start=1):
+            lines.append(f"{idx}. `{path}`")
+    else:
+        lines.append("1. No focused module path detected.")
+
+    lines.extend(["", "## Concrete Runtime Flows", ""])
+    if key_flows:
+        for flow in key_flows[:6]:
+            lines.append(f"- **{flow.get('name', 'flow')}**: {flow.get('flow', 'n/a')}")
+    else:
+        lines.append("- No runtime flow extracted.")
+
+    lines.extend(["", "## Hot Modules", ""])
+    if module_metrics:
+        for row in module_metrics[:5]:
+            lines.append(
+                f"- `{row['module']}` (hotspot={row['hotspot_score']:.2f}, in={row['coupling_in']}, out={row['coupling_out']})"
+            )
+    else:
+        lines.append("- No module hotspots detected.")
+
+    lines.extend(["", "## Required Artifact Check", ""])
+    for artifact, present in required_artifact_status.items():
+        status = "present" if present else "missing"
+        lines.append(f"- `{artifact}`: {status}")
+
+    lines.extend(["", "## Blind Spots", ""])
+    blind_spots = []
+    if len(routes) == 0:
+        blind_spots.append("Route extraction returned 0 routes; runtime behavior inferred from entrypoints/call graph.")
+    if summary.get("files_skipped", 0):
+        blind_spots.append("Some files were skipped due to limits/filters; architecture may be partial.")
+    if parser_errors:
+        blind_spots.append(f"Parser/extraction issues detected: {len(parser_errors)} (see `case_file.md`).")
+
+    missing = [name for name, present in required_artifact_status.items() if not present]
+    if missing:
+        blind_spots.append(f"Missing required artifacts: {', '.join(missing)}.")
+
+    if blind_spots:
+        for note in blind_spots:
+            lines.append(f"- {note}")
+    else:
+        lines.append("- No critical blind spots flagged for initial ramp-up.")
+
+    return "\n".join(lines) + "\n"
+
+
 def _json_dump(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -2776,7 +3763,7 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     start_here = build_start_here(entrypoints, routes, module_metrics, entities, parsed_files)
     glossary = build_glossary(entities, parsed_files)
     change_safely = build_change_safely(repo_path, parsed_files)
-    key_flows = build_key_flows(routes, module_call_edges, entities)
+    key_flows = build_key_flows(routes, module_call_edges, entities, entrypoints, module_metrics, parsed_files)
     terraform_files = discover_terraform_files(repo_path)
     terraform_graph = build_terraform_graph(repo_path, terraform_files)
 
@@ -2801,16 +3788,42 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     dbml = render_dbml(entities, relationships)
     call_mmd = render_call_mermaid(function_call_edges)
     dependency_mmd = render_dependency_mermaid(nodes, edges, cycles)
+    architecture_service_puml = render_service_architecture_plantuml(
+        parsed_files,
+        edges,
+        frameworks,
+        routes,
+        entities,
+        entrypoints,
+    )
+    architecture_code_puml = render_architecture_plantuml(parsed_files, edges, frameworks, routes, entities, entrypoints)
+    architecture_iac_puml = render_iac_architecture_plantuml(iac)
+    architecture_puml = _ensure_required_plantuml(architecture_service_puml, "System Architecture")
+    er_puml = _ensure_required_plantuml(render_er_plantuml(entities, relationships), "ER Diagram")
+    call_puml = _ensure_required_plantuml(render_call_plantuml(function_call_edges), "Call Graph")
+    dependency_puml = _ensure_required_plantuml(
+        render_dependency_plantuml(nodes, edges, cycles), "Dependency Graph"
+    )
+    architecture_service_puml = _ensure_required_plantuml(architecture_service_puml, "Architecture Services")
+    architecture_code_puml = _ensure_required_plantuml(architecture_code_puml, "Architecture Code")
+    architecture_iac_puml = _ensure_required_plantuml(architecture_iac_puml, "Architecture IaC")
+    sequence_mmd = render_sequence_mermaid(routes, key_flows, entities)
+    sequence_puml = render_sequence_plantuml(routes, key_flows, entities)
+    use_case_mmd = render_use_case_mermaid(routes, entrypoints)
+    use_case_puml = render_use_case_plantuml(routes, entrypoints)
 
     confidence_notes = [
         "Dynamic dispatch and reflection calls are approximated as low confidence.",
         "JSImport resolution uses heuristic path matching for package aliases.",
     ]
 
+    source_reference = (config.source_reference or repo_path.as_posix()).strip() or repo_path.as_posix()
     summary = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "repo_name": repo_path.name,
-        "repo_root": repo_path.as_posix(),
+        "repo_root": source_reference,
+        "analysis_workspace": repo_path.as_posix(),
+        "source_kind": config.source_kind,
         "languages": languages,
         "frameworks": frameworks,
         "entrypoints": entrypoints,
@@ -2820,10 +3833,26 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         "terraform_detected": bool(terraform_graph.get("files")),
         "terraform_files": len(terraform_graph.get("files", [])),
     }
+    data_snapshot = build_data_snapshot(
+        summary,
+        routes,
+        entities,
+        relationships,
+        module_metrics,
+        function_hotspots,
+        cycles,
+        iac,
+    )
+    data_json_source = json.dumps(data_snapshot, indent=2, sort_keys=True) + "\n"
+    data_yaml_source = render_data_yaml(data_snapshot)
+    data_json_puml = render_json_plantuml(data_json_source)
+    data_yaml_puml = render_yaml_plantuml(data_yaml_source)
 
     repo_json = {
         "name": repo_path.name,
-        "root": repo_path.as_posix(),
+        "root": source_reference,
+        "analysis_workspace": repo_path.as_posix(),
+        "source_kind": config.source_kind,
         "languages": languages,
         "frameworks": frameworks,
         "entrypoints": entrypoints,
@@ -2867,25 +3896,22 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     )
     index_md = render_index_markdown(summary, terraform_drawio_file=terraform_drawio_file)
     case_file_md = render_case_file(parser_errors, skipped, confidence_notes)
+    required_artifact_status = {
+        "architecture.puml": bool(architecture_puml.strip()),
+        "er.puml": bool(er_puml.strip()),
+        "call-graph.puml": bool(call_puml.strip()),
+        "dependencies.puml": bool(dependency_puml.strip()),
+    }
+    handoff_md = render_handoff_markdown(
+        summary,
+        start_here,
+        key_flows,
+        module_metrics,
+        routes,
+        parser_errors,
+        required_artifact_status,
+    )
     confidence_distribution = Counter(edge.get("confidence", "unknown") for edge in edges)
-
-    diagram_payload: dict[str, str] = {
-        "architecture": architecture_mmd,
-        "er": er_mmd,
-        "call_graph": call_mmd,
-        "dependencies": dependency_mmd,
-    }
-    if terraform_drawio:
-        diagram_payload["terraform_drawio"] = terraform_drawio
-
-    diagram_payload: dict[str, str] = {
-        "architecture": architecture_mmd,
-        "er": er_mmd,
-        "call_graph": call_mmd,
-        "dependencies": dependency_mmd,
-    }
-    if terraform_drawio:
-        diagram_payload["terraform_drawio"] = terraform_drawio
 
     dashboard_state = {
         "generated_at": summary["generated_at"],
@@ -2930,6 +3956,23 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
             "er": er_mmd,
             "call_graph": call_mmd,
             "dependencies": dependency_mmd,
+            "sequence": sequence_mmd,
+            "use_case": use_case_mmd,
+            "json_data": data_json_source,
+            "yaml_data": data_yaml_source,
+        },
+        "diagrams_plantuml": {
+            "architecture": architecture_puml,
+            "architecture_services": architecture_service_puml,
+            "architecture_code": architecture_code_puml,
+            "architecture_iac": architecture_iac_puml,
+            "er": er_puml,
+            "call_graph": call_puml,
+            "dependencies": dependency_puml,
+            "sequence": sequence_puml,
+            "use_case": use_case_puml,
+            "json_data": data_json_puml,
+            "yaml_data": data_yaml_puml,
         },
         "onboarding": {
             "start_here": start_here,
@@ -2939,6 +3982,7 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         },
         "narrative": {
             "repo_summary_markdown": repo_summary_md,
+            "handoff_markdown": handoff_md,
         },
         "kiv": {
             "graph_3d": "Deferred to Phase 2",
@@ -2955,6 +3999,8 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
             }
         },
     }
+    if terraform_drawio:
+        dashboard_state["diagrams"]["terraform_drawio"] = terraform_drawio
 
     artifacts_dir = output_root / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -2971,6 +4017,8 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     _json_dump(artifacts_dir / "calls.json", {"module_calls": module_call_edges, "function_calls": function_call_edges})
     _json_dump(artifacts_dir / "entities.json", {"entities": entities, "relationships": relationships})
     _json_dump(artifacts_dir / "iac.json", iac)
+    if terraform_graph.get("files"):
+        _json_dump(artifacts_dir / "terraform.json", terraform_graph)
     _json_dump(artifacts_dir / "cycles.json", {"cycles": cycles})
     _json_dump(
         artifacts_dir / "hotspots.json",
@@ -2985,23 +4033,52 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
     (output_root / "architecture-code.mmd").write_text(architecture_code_mmd, encoding="utf-8")
     (output_root / "architecture-iac.mmd").write_text(architecture_iac_mmd, encoding="utf-8")
     (output_root / "architecture.mmd").write_text(architecture_mmd, encoding="utf-8")
+    (output_root / "architecture-services.puml").write_text(architecture_service_puml, encoding="utf-8")
+    (output_root / "architecture-code.puml").write_text(architecture_code_puml, encoding="utf-8")
+    (output_root / "architecture-iac.puml").write_text(architecture_iac_puml, encoding="utf-8")
+    (output_root / "architecture.puml").write_text(architecture_puml, encoding="utf-8")
     (output_root / "er.mmd").write_text(er_mmd, encoding="utf-8")
+    (output_root / "er.puml").write_text(er_puml, encoding="utf-8")
     (output_root / "er.dbml").write_text(dbml, encoding="utf-8")
     (output_root / "call-graph.mmd").write_text(call_mmd, encoding="utf-8")
+    (output_root / "call-graph.puml").write_text(call_puml, encoding="utf-8")
     (output_root / "dependencies.mmd").write_text(dependency_mmd, encoding="utf-8")
+    (output_root / "dependencies.puml").write_text(dependency_puml, encoding="utf-8")
+    (output_root / "sequence.mmd").write_text(sequence_mmd, encoding="utf-8")
+    (output_root / "sequence.puml").write_text(sequence_puml, encoding="utf-8")
+    (output_root / "use-case.mmd").write_text(use_case_mmd, encoding="utf-8")
+    (output_root / "use-case.puml").write_text(use_case_puml, encoding="utf-8")
+    (output_root / "data.json").write_text(data_json_source, encoding="utf-8")
+    (output_root / "data.yaml").write_text(data_yaml_source, encoding="utf-8")
+    (output_root / "json-data.puml").write_text(data_json_puml, encoding="utf-8")
+    (output_root / "yaml-data.puml").write_text(data_yaml_puml, encoding="utf-8")
     (output_root / "onboarding.md").write_text(onboarding_md, encoding="utf-8")
     (output_root / "repo-summary.md").write_text(repo_summary_md, encoding="utf-8")
     (output_root / "top-files.md").write_text(top_files_md, encoding="utf-8")
     (output_root / "index.md").write_text(index_md, encoding="utf-8")
+    (output_root / "handoff.md").write_text(handoff_md, encoding="utf-8")
     (output_root / "case_file.md").write_text(case_file_md, encoding="utf-8")
 
     (diagrams_dir / "architecture.mmd").write_text(architecture_mmd, encoding="utf-8")
     (diagrams_dir / "architecture-services.mmd").write_text(architecture_service_mmd, encoding="utf-8")
     (diagrams_dir / "architecture-code.mmd").write_text(architecture_code_mmd, encoding="utf-8")
     (diagrams_dir / "architecture-iac.mmd").write_text(architecture_iac_mmd, encoding="utf-8")
+    (diagrams_dir / "architecture-services.puml").write_text(architecture_service_puml, encoding="utf-8")
+    (diagrams_dir / "architecture-code.puml").write_text(architecture_code_puml, encoding="utf-8")
+    (diagrams_dir / "architecture-iac.puml").write_text(architecture_iac_puml, encoding="utf-8")
+    (diagrams_dir / "architecture.puml").write_text(architecture_puml, encoding="utf-8")
     (diagrams_dir / "er.mmd").write_text(er_mmd, encoding="utf-8")
+    (diagrams_dir / "er.puml").write_text(er_puml, encoding="utf-8")
     (diagrams_dir / "call-graph.mmd").write_text(call_mmd, encoding="utf-8")
+    (diagrams_dir / "call-graph.puml").write_text(call_puml, encoding="utf-8")
     (diagrams_dir / "dependencies.mmd").write_text(dependency_mmd, encoding="utf-8")
+    (diagrams_dir / "dependencies.puml").write_text(dependency_puml, encoding="utf-8")
+    (diagrams_dir / "sequence.mmd").write_text(sequence_mmd, encoding="utf-8")
+    (diagrams_dir / "sequence.puml").write_text(sequence_puml, encoding="utf-8")
+    (diagrams_dir / "use-case.mmd").write_text(use_case_mmd, encoding="utf-8")
+    (diagrams_dir / "use-case.puml").write_text(use_case_puml, encoding="utf-8")
+    (diagrams_dir / "json-data.puml").write_text(data_json_puml, encoding="utf-8")
+    (diagrams_dir / "yaml-data.puml").write_text(data_yaml_puml, encoding="utf-8")
     if terraform_drawio_file and terraform_drawio:
         (output_root / terraform_drawio_file).write_text(terraform_drawio, encoding="utf-8")
 
@@ -3011,4 +4088,3 @@ def run_xray(config: XrayConfig) -> dict[str, Any]:
         "start_here": start_here,
         "warnings": parser_errors,
     }
-

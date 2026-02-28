@@ -1,6 +1,6 @@
 ---
 name: code-autopsy
-description: Perform deep architectural and risk autopsies on modern or legacy codebases. Use when Codex needs to index a large repository, build a code knowledge graph, generate architecture diagrams (Mermaid, draw.io, or Eraser-ready), simulate stress/failure scenarios, map attack surface, propose defensive patches, prioritize refactors, and forecast 2-year maintainability decay.
+description: Perform deep architectural and risk autopsies on modern or legacy codebases. Use when Codex needs to index a large repository, build a code knowledge graph, generate architecture diagrams (Mermaid, PlantUML, draw.io, or Eraser-ready), simulate stress/failure scenarios, map attack surface, propose defensive patches, prioritize refactors, and forecast 2-year maintainability decay.
 ---
 
 # Code Autopsy
@@ -36,6 +36,10 @@ GitHub URL mode does not require manual cloning; the CLI fetches source directly
 
 4. Export diagrams:
 - `diagrams/architecture.mmd` (required)
+- `diagrams/architecture.puml` (required)
+- `diagrams/sequence.mmd` + `diagrams/sequence.puml` (required)
+- `diagrams/use-case.mmd` + `diagrams/use-case.puml` (required)
+- `diagrams/json-data.puml` + `diagrams/yaml-data.puml` (required)
 - `diagrams/architecture.drawio` (optional)
 - Eraser import payload (optional) per `references/diagram-exports.md`
 
@@ -48,6 +52,9 @@ CLI contract:
 - `--output`: output base path (default `code-autopsy/.autopsy-outputs`).
 - `--viewer/--no-viewer`: auto install/start viewer frontend after output (default: enabled).
 - `--open-viewer/--no-open-viewer`: auto-open browser dashboard URL (default: enabled).
+- environment overrides for local npm/node resolution:
+  - `AUTOPSY_NPM_BIN=/absolute/path/to/npm`
+  - `AUTOPSY_NODE_BIN=/absolute/path/to/node`
 
 Default expectation for this skill:
 - if `--no-viewer` and `--no-open-viewer` are not provided, the CLI should attempt to start the viewer and open the dashboard URL.
@@ -64,7 +71,19 @@ Output root:
 - `code-autopsy/.autopsy-outputs/<repo_name>/attack_surface.json`
 - `code-autopsy/.autopsy-outputs/<repo_name>/failure_simulation.json`
 - `code-autopsy/.autopsy-outputs/<repo_name>/dashboard_state.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/handoff.md`
 - `code-autopsy/.autopsy-outputs/<repo_name>/diagrams/architecture.mmd`
+- `code-autopsy/.autopsy-outputs/<repo_name>/diagrams/architecture.puml`
+- `code-autopsy/.autopsy-outputs/<repo_name>/diagrams/sequence.mmd`
+- `code-autopsy/.autopsy-outputs/<repo_name>/diagrams/sequence.puml`
+- `code-autopsy/.autopsy-outputs/<repo_name>/diagrams/use-case.mmd`
+- `code-autopsy/.autopsy-outputs/<repo_name>/diagrams/use-case.puml`
+- `code-autopsy/.autopsy-outputs/<repo_name>/data.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/data.yaml`
+
+Note on source paths:
+- `repo.json.root` and `dashboard_state.summary.repo_root` use a stable source reference (local absolute path or GitHub URL input).
+- `repo.json.analysis_workspace` and `dashboard_state.summary.analysis_workspace` capture the actual analyzed filesystem path.
 
 ## Operating Model
 
@@ -162,6 +181,9 @@ Always record skipped regions and confidence impact in `case_file.md`.
 Always generate Mermaid from `graph.json`. Use:
 - `scripts/render_mermaid_from_graph.py` to convert graph artifacts into flowchart syntax.
 
+Also generate PlantUML from `graph.json` when PlantUML artifacts are requested:
+- `scripts/render_plantuml_from_graph.py` to convert graph artifacts into component syntax.
+
 Optionally generate draw.io XML using the mapping in `references/diagram-exports.md`.
 
 For Eraser or other diagram-as-code tools, export a normalized node/edge list plus style metadata.
@@ -181,8 +203,9 @@ Rank breakage likelihood and blast radius. Output causal chains, not only scores
 
 - `references/artifacts-schema.md`: canonical output schemas.
 - `references/scoring-models.md`: risk, decay, and fragility formulas.
-- `references/diagram-exports.md`: Mermaid/draw.io/Eraser export expectations.
+- `references/diagram-exports.md`: Mermaid/PlantUML/draw.io/Eraser export expectations.
 - `references/agent-prompts.md`: scoped prompts for each agent.
 - `scripts/code_autopsy.py`: baseline orchestrator for GitHub URL or local path inputs.
 - `scripts/render_mermaid_from_graph.py`: graph to Mermaid conversion.
+- `scripts/render_plantuml_from_graph.py`: graph to PlantUML conversion.
 - `scripts/score_decay.py`: baseline decay score calculator.

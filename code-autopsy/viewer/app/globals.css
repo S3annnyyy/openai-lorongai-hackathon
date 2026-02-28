@@ -465,6 +465,21 @@ main {
   overflow: auto;
 }
 
+.iac-image-shell {
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  overflow: auto;
+  padding: 8px;
+}
+
+.iac-image {
+  width: 100%;
+  min-width: 960px;
+  height: auto;
+  display: block;
+}
+
 .drawio-shell.compact {
   min-height: 320px;
   height: 320px;
@@ -1306,6 +1321,25 @@ main {
 .mermaid-modal-static {
   min-width: 100%;
 }
+
+.plantuml-shell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.plantuml-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.plantuml-image svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
 @media (max-width: 1080px) {
   .layout-grid {
     grid-template-columns: 1fr;

@@ -57,7 +57,53 @@ entry --> service
     dependencies: `flowchart LR
 entry --> service
 `,
+    sequence: `sequenceDiagram
+    actor Client
+    participant API
+    participant Core
+    Client->>API: GET /health
+    API->>Core: handle request
+    Core-->>API: payload
+    API-->>Client: 200 OK
+`,
+    use_case: `flowchart LR
+actor_client["User / Client"] --> uc_default(["Access application capability"])
+`,
+    json_data: `{
+  "repo": {
+    "name": "unavailable"
+  },
+  "analysis": {
+    "routes": []
+  }
+}
+`,
+    yaml_data: `repo:
+  name: "unavailable"
+analysis:
+  routes: []
+`,
     terraform_drawio: ""
+  },
+  diagrams_plantuml: {
+    json_data: `@startjson
+{
+  "repo": {
+    "name": "unavailable"
+  },
+  "analysis": {
+    "routes": []
+  }
+}
+@endjson
+`,
+    yaml_data: `@startyaml
+repo:
+  name: "unavailable"
+analysis:
+  routes: []
+@endyaml
+`
   },
   onboarding: {
     start_here: ["entry", "service"],

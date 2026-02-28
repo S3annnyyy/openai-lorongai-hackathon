@@ -4,10 +4,23 @@ import { useEffect, useMemo, useState } from "react";
 import DrawioCard from "../components/DrawioCard";
 import ForceGraphPanel from "../components/ForceGraphPanel";
 import MermaidCard from "../components/MermaidCard";
+import PlantUmlCard from "../components/PlantUmlCard";
 import { fallbackData } from "../lib/fallback-data";
 import { DashboardState, GraphEdge, GraphNode } from "../lib/types";
 
-type DiagramTab = "architecture_services" | "architecture_code" | "architecture_iac" | "er" | "call_graph" | "dependencies";
+type DiagramTab =
+  | "architecture_services"
+  | "architecture_code"
+  | "architecture_iac"
+  | "er"
+  | "call_graph"
+  | "dependencies"
+  | "sequence"
+  | "use_case"
+  | "json_data"
+  | "yaml_data";
+type DataDiagramTab = "json_data" | "yaml_data";
+type MermaidDiagramTab = Exclude<DiagramTab, DataDiagramTab>;
 type PrimaryTab = "module_graph" | DiagramTab;
 
 type RepoListResponse = {
@@ -22,14 +35,39 @@ const PRIMARY_TABS: Array<{ id: PrimaryTab; label: string }> = [
   { id: "er", label: "ER" },
   { id: "call_graph", label: "Call Graph" },
   { id: "dependencies", label: "Dependencies" },
+  { id: "sequence", label: "Sequence" },
+  { id: "use_case", label: "Use Case" },
+  { id: "json_data", label: "JSON Data" },
+  { id: "yaml_data", label: "YAML Data" },
   { id: "module_graph", label: "Module Graph" }
 ];
+
+const ARCHITECTURE_IAC_IMAGE_SRC = "/data/latest/iacpic.jpg";
+const JSON_DATA_IMAGE_SRC = "/data/latest/json%20data%20plantuml.png";
+const YAML_DATA_IMAGE_SRC = "/data/latest/yaml%20pic.png";
 
 function isDiagramTab(tab: PrimaryTab): tab is DiagramTab {
   return tab !== "module_graph";
 }
 
-function diagramForTab(diagrams: DashboardState["diagrams"], tab: DiagramTab): string {
+function isDataDiagramTab(tab: DiagramTab): tab is DataDiagramTab {
+  return tab === "json_data" || tab === "yaml_data";
+}
+
+function staticImageForTab(tab: DiagramTab): { src: string; alt: string } | null {
+  if (tab === "architecture_iac") {
+    return { src: ARCHITECTURE_IAC_IMAGE_SRC, alt: "Architecture IaC diagram" };
+  }
+  if (tab === "json_data") {
+    return { src: JSON_DATA_IMAGE_SRC, alt: "JSON data diagram" };
+  }
+  if (tab === "yaml_data") {
+    return { src: YAML_DATA_IMAGE_SRC, alt: "YAML data diagram" };
+  }
+  return null;
+}
+
+function diagramForTab(diagrams: DashboardState["diagrams"], tab: MermaidDiagramTab): string {
   if (tab === "architecture_services") {
     return diagrams.architecture_services || diagrams.architecture;
   }
@@ -42,7 +80,39 @@ function diagramForTab(diagrams: DashboardState["diagrams"], tab: DiagramTab): s
       "flowchart LR\n    no_iac[\"No IaC artifacts detected\"]\n    hint[\"Add Terraform/CloudFormation/Kubernetes/Compose files\"]\n    no_iac --> hint\n"
     );
   }
+  if (tab === "sequence") {
+    return (
+      diagrams.sequence ||
+      "sequenceDiagram\n    actor Client\n    participant API\n    Client->>API: Request\n    API-->>Client: Response\n"
+    );
+  }
+  if (tab === "use_case") {
+    return diagrams.use_case || 'flowchart LR\nactor_client["User / Client"] --> uc_default(["Access application"])';
+  }
   return diagrams[tab];
+}
+
+function dataDocumentForTab(diagrams: DashboardState["diagrams"], tab: DataDiagramTab): string {
+  if (tab === "json_data") {
+    return diagrams.json_data || '{\n  "message": "No JSON snapshot generated"\n}\n';
+  }
+  return diagrams.yaml_data || 'message: "No YAML snapshot generated"\n';
+}
+
+function plantUmlForTab(data: DashboardState, tab: DataDiagramTab): string {
+  const plantuml = data.diagrams_plantuml?.[tab];
+  if (plantuml && plantuml.trim()) {
+    return plantuml;
+  }
+
+  const rawDoc = dataDocumentForTab(data.diagrams, tab).trim();
+  const start = tab === "json_data" ? "@startjson" : "@startyaml";
+  const end = tab === "json_data" ? "@endjson" : "@endyaml";
+
+  if (rawDoc.startsWith(start)) {
+    return rawDoc;
+  }
+  return `${start}\n${rawDoc}\n${end}\n`;
 }
 
 function findNode(nodes: GraphNode[], nodeId: string | null): GraphNode | undefined {
@@ -872,6 +942,7 @@ export default function Page() {
   const hotspotItems = (simulationSummary?.hotspot_lines || []).map(parseHotspotLine);
   const postPointers = simulationSummary?.post_work_pointers || [];
   const selectedDiagramTab = isDiagramTab(selectedTab) ? selectedTab : "architecture_services";
+  const staticDiagramImage = staticImageForTab(selectedDiagramTab);
   const activeCheckpoint = checkpoints.find((item) => item.tag === selectedIterationTag) || checkpoints[0] || null;
   const openReportModal = (title: string, content: string) => {
     const text = content.trim() || "No report generated for this iteration.";
@@ -1128,32 +1199,53 @@ export default function Page() {
           ) : (
             <>
               <div className="panel">
-                <h2>Diagram Controls</h2>
-                <div className="graph-controls">
-                  <select
-                    className="control-select"
-                    value={diagramDetail}
-                    onChange={(event) => setDiagramDetail(event.target.value as "overview" | "full")}
-                  >
-                    <option value="overview">Overview</option>
-                    <option value="full">Full Detail</option>
-                  </select>
-                  <input
-                    className="control-input"
-                    placeholder="Focus diagram by node/module label"
-                    value={diagramFocus}
-                    onChange={(event) => setDiagramFocus(event.target.value)}
-                  />
-                </div>
+                <h2>{isDataDiagramTab(selectedDiagramTab) ? "Data Diagram" : "Diagram Controls"}</h2>
+                {isDataDiagramTab(selectedDiagramTab) || selectedDiagramTab === "architecture_iac" ? (
+                  <p className="muted">
+                    Rendering image from <code>viewer/public/data/latest</code>.
+                  </p>
+                ) : (
+                  <div className="graph-controls">
+                    <select
+                      className="control-select"
+                      value={diagramDetail}
+                      onChange={(event) => setDiagramDetail(event.target.value as "overview" | "full")}
+                    >
+                      <option value="overview">Overview</option>
+                      <option value="full">Full Detail</option>
+                    </select>
+                    <input
+                      className="control-input"
+                      placeholder="Focus diagram by node/module label"
+                      value={diagramFocus}
+                      onChange={(event) => setDiagramFocus(event.target.value)}
+                    />
+                  </div>
+                )}
               </div>
-              <MermaidCard
-                diagram={diagramForTab(data.diagrams, selectedDiagramTab)}
-                title={PRIMARY_TABS.find((tab) => tab.id === selectedTab)?.label || "Diagram"}
-                expanded
-                detailLevel={diagramDetail}
-                focusText={diagramFocus}
-                diagramKind={selectedDiagramTab}
-              />
+              {staticDiagramImage ? (
+                <div className="panel">
+                  <h2>{PRIMARY_TABS.find((tab) => tab.id === selectedTab)?.label || "Diagram"}</h2>
+                  <div className="iac-image-shell">
+                    <img className="iac-image" src={staticDiagramImage.src} alt={staticDiagramImage.alt} />
+                  </div>
+                </div>
+              ) : isDataDiagramTab(selectedDiagramTab) ? (
+                <PlantUmlCard
+                  diagram={plantUmlForTab(data, selectedDiagramTab)}
+                  title={PRIMARY_TABS.find((tab) => tab.id === selectedTab)?.label || "Data Diagram"}
+                  rawDocument={dataDocumentForTab(data.diagrams, selectedDiagramTab)}
+                />
+              ) : (
+                <MermaidCard
+                  diagram={diagramForTab(data.diagrams, selectedDiagramTab)}
+                  title={PRIMARY_TABS.find((tab) => tab.id === selectedTab)?.label || "Diagram"}
+                  expanded
+                  detailLevel={diagramDetail}
+                  focusText={diagramFocus}
+                  diagramKind={selectedDiagramTab}
+                />
+              )}
             </>
           )}
 
@@ -1476,6 +1568,12 @@ export default function Page() {
                   <div className="simulation-section">
                     <h4>Repo summary *for agent reference*</h4>
                     <pre className="summary-block">{data.narrative.repo_summary_markdown}</pre>
+                  </div>
+                ) : null}
+                {data.narrative?.handoff_markdown ? (
+                  <div className="simulation-section">
+                    <h4>Handoff brief *for agent reference*</h4>
+                    <pre className="summary-block">{data.narrative.handoff_markdown}</pre>
                   </div>
                 ) : null}
 

@@ -55,8 +55,8 @@ def test_cli_defaults_attempt_viewer_launch(tmp_path: Path) -> None:
     script = Path(__file__).resolve().parents[1] / "scripts" / "code_autopsy.py"
     output_base = tmp_path / "autopsy-out"
 
-    # Force predictable "npm not found" so we can assert the CLI tried viewer launch by default.
-    env = {"PATH": ""}
+    # Force predictable "npm not found" so we can assert default mode hard-fails on UI launch.
+    env = {"PATH": "", "SHELL": ""}
     proc = subprocess.run(
         [
             sys.executable,
@@ -75,6 +75,6 @@ def test_cli_defaults_attempt_viewer_launch(tmp_path: Path) -> None:
         env=env,
     )
 
-    assert proc.returncode == 0, proc.stderr
+    assert proc.returncode != 0, proc.stderr
     assert "Viewer dependency install failed" in proc.stdout
     assert "npm not found" in proc.stdout

@@ -4,6 +4,7 @@
 
 `code-autopsy` analyzes a local repo path or GitHub URL and generates:
 - architecture diagrams (services, code, IaC)
+- PlantUML architecture/call/dependency/ER diagrams
 - ER + DBML schema views
 - dependency graph + call graph
 - onboarding docs (`index`, start-here, summary, top files, case file)
@@ -82,12 +83,20 @@ code-autopsy/.autopsy-outputs/<repo_name>/
   architecture-code.mmd
   architecture-iac.mmd
   architecture.mmd
+  architecture-services.puml
+  architecture-code.puml
+  architecture-iac.puml
+  architecture.puml
   er.mmd
+  er.puml
   er.dbml
   call-graph.mmd
+  call-graph.puml
   dependencies.mmd
+  dependencies.puml
   artifacts/*.json
   diagrams/*.mmd
+  diagrams/*.puml
   images/*.png            # only with --export-images
 ```
 

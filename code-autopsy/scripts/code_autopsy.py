@@ -28,6 +28,67 @@ DEFAULT_OUTPUT_BASE = SKILL_ROOT / ".autopsy-outputs"
 SIMULATION_DEFAULT_WORKSPACE_SUBDIR = "simulations"
 
 
+def _resolve_executable(binary_name: str, *, env_override: str | None = None) -> tuple[str | None, str | None]:
+    if env_override:
+        override = os.environ.get(env_override, "").strip()
+        if override:
+            override_path = Path(override).expanduser()
+            if override_path.exists() and os.access(override_path, os.X_OK):
+                return override_path.as_posix(), None
+            return None, (
+                f"{binary_name} override from {env_override} is not executable: {override_path}"
+            )
+
+    resolved = shutil.which(binary_name)
+    if resolved is not None:
+        return resolved, None
+
+    shell_path = os.environ.get("SHELL", "").strip()
+    if shell_path:
+        shell = Path(shell_path).expanduser()
+        if shell.exists() and os.access(shell, os.X_OK):
+            completed = subprocess.run(
+                [shell.as_posix(), "-lc", f"command -v {binary_name}"],
+                check=False,
+                capture_output=True,
+                text=True,
+                shell=False,
+            )
+            candidate = (completed.stdout or "").strip().splitlines()
+            if completed.returncode == 0 and candidate:
+                executable = Path(candidate[-1]).expanduser()
+                if executable.exists() and os.access(executable, os.X_OK):
+                    return executable.as_posix(), None
+
+    hint = f"Set {env_override} to an absolute executable path." if env_override else ""
+    detail = f"{binary_name} not found in PATH or login shell."
+    if hint:
+        detail = f"{detail} {hint}"
+    return None, detail
+
+
+def _build_node_tool_env(*, npm_cmd: str, node_cmd: str, extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    path_parts: list[str] = []
+
+    for cmd in (node_cmd, npm_cmd):
+        parent = Path(cmd).resolve().parent.as_posix()
+        if parent not in path_parts:
+            path_parts.append(parent)
+
+    current_path = env.get("PATH", "")
+    for system_path in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+        if system_path not in path_parts:
+            path_parts.append(system_path)
+    if current_path:
+        path_parts.append(current_path)
+
+    env["PATH"] = os.pathsep.join(path_parts)
+    if extra_env:
+        env.update(extra_env)
+    return env
+
+
 @dataclass
 class PreparedSource:
     repo_path: Path
@@ -367,10 +428,11 @@ def _write_simulation_into_dashboard(output_root: Path, simulation_summary: dict
 
 
 def _run_node_script(script_path: Path, args: list[str], cwd: Path) -> tuple[bool, str]:
-    if shutil.which("node") is None:
-        return False, "Node.js not found. Install Node 18+ to run viewer tooling."
+    node_cmd, resolve_error = _resolve_executable("node", env_override="AUTOPSY_NODE_BIN")
+    if node_cmd is None:
+        return False, f"Node.js not found. Install Node 18+ to run viewer tooling. {resolve_error}"
 
-    cmd = ["node", script_path.as_posix(), *args]
+    cmd = [node_cmd, script_path.as_posix(), *args]
     try:
         completed = subprocess.run(
             cmd,
@@ -428,9 +490,12 @@ def _is_port_open(host: str, port: int) -> bool:
 
 
 def _run_npm_install(viewer_dir: Path) -> tuple[bool, str]:
-    npm_cmd = shutil.which("npm")
+    npm_cmd, resolve_error = _resolve_executable("npm", env_override="AUTOPSY_NPM_BIN")
     if npm_cmd is None:
-        return False, "npm not found. Install Node.js/npm to launch the viewer."
+        return False, f"npm not found. Install Node.js/npm to launch the viewer. {resolve_error}"
+    node_cmd, node_error = _resolve_executable("node", env_override="AUTOPSY_NODE_BIN")
+    if node_cmd is None:
+        return False, f"node not found for npm execution. Install Node.js. {node_error}"
 
     completed = subprocess.run(
         [npm_cmd, "install"],
@@ -439,6 +504,7 @@ def _run_npm_install(viewer_dir: Path) -> tuple[bool, str]:
         capture_output=True,
         text=True,
         shell=False,
+        env=_build_node_tool_env(npm_cmd=npm_cmd, node_cmd=node_cmd),
     )
     output = (completed.stdout or "") + (completed.stderr or "")
     if completed.returncode != 0:
@@ -447,9 +513,12 @@ def _run_npm_install(viewer_dir: Path) -> tuple[bool, str]:
 
 
 def _start_viewer_server(viewer_dir: Path, port: int, output_base: Path) -> tuple[bool, str]:
-    npm_cmd = shutil.which("npm")
+    npm_cmd, resolve_error = _resolve_executable("npm", env_override="AUTOPSY_NPM_BIN")
     if npm_cmd is None:
-        return False, "npm not found. Install Node.js/npm to launch the viewer."
+        return False, f"npm not found. Install Node.js/npm to launch the viewer. {resolve_error}"
+    node_cmd, node_error = _resolve_executable("node", env_override="AUTOPSY_NODE_BIN")
+    if node_cmd is None:
+        return False, f"node not found for npm execution. Install Node.js. {node_error}"
 
     if _is_port_open("127.0.0.1", port):
         return True, f"Viewer already running on port {port}."
@@ -461,57 +530,125 @@ def _start_viewer_server(viewer_dir: Path, port: int, output_base: Path) -> tupl
         )
 
     try:
-        env = os.environ.copy()
-        env["AUTOPSY_OUTPUT_ROOT"] = output_base.as_posix()
-        subprocess.Popen(
+        env = _build_node_tool_env(
+            npm_cmd=npm_cmd,
+            node_cmd=node_cmd,
+            extra_env={"AUTOPSY_OUTPUT_ROOT": output_base.as_posix()},
+        )
+        log_dir = output_base / "_viewer-logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"viewer-{port}.log"
+        log_handle = log_path.open("w", encoding="utf-8")
+        process = subprocess.Popen(
             [npm_cmd, "run", "dev", "--", "--port", str(port)],
             cwd=viewer_dir,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
             shell=False,
             env=env,
             creationflags=creationflags,
+            start_new_session=True,
         )
+        log_handle.close()
     except OSError as exc:
         return False, f"Unable to launch viewer dev server: {exc}"
 
-    deadline = time.time() + 25
+    deadline = time.time() + 60
     while time.time() < deadline:
         if _is_port_open("127.0.0.1", port):
             return True, f"Viewer started on port {port}."
+        if process.poll() is not None:
+            detail = f"Viewer process exited with code {process.returncode}. Log: {log_path}"
+            try:
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                if lines:
+                    tail = "\n".join(lines[-20:])
+                    detail = f"{detail}\nLast output:\n{tail}"
+            except OSError:
+                pass
+            return False, detail
         time.sleep(0.4)
 
-    return False, f"Viewer did not start on port {port} within timeout."
+    detail = f"Viewer did not start on port {port} within timeout. Log: {log_path}"
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if lines:
+            tail = "\n".join(lines[-20:])
+            detail = f"{detail}\nLast output:\n{tail}"
+    except OSError:
+        pass
+    return False, detail
 
 
-def _launch_viewer(repo_name: str, port: int, open_browser: bool, output_base: Path) -> list[str]:
-    warnings: list[str] = []
+def _open_viewer_url(viewer_url: str) -> tuple[bool, str]:
+    browser_error = ""
+    try:
+        if webbrowser.open(viewer_url, new=2):
+            return True, "Browser opened via Python webbrowser."
+    except Exception as exc:  # noqa: BLE001
+        browser_error = str(exc)
+
+    if sys.platform == "darwin":
+        fallback_cmd = ["open", viewer_url]
+    elif sys.platform == "win32":
+        fallback_cmd = ["cmd", "/c", "start", "", viewer_url]
+    else:
+        fallback_cmd = ["xdg-open", viewer_url]
+
+    binary = fallback_cmd[0]
+    if binary != "cmd" and shutil.which(binary) is None:
+        detail = f"Fallback launcher '{binary}' not found."
+        if browser_error:
+            detail = f"{detail} webbrowser error: {browser_error}"
+        return False, detail
+
+    completed = subprocess.run(
+        fallback_cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+    if completed.returncode == 0:
+        return True, f"Browser opened via fallback launcher '{binary}'."
+
+    detail = (completed.stderr or completed.stdout or "").strip()
+    if not detail:
+        detail = f"Fallback launcher '{binary}' exited with code {completed.returncode}."
+    if browser_error:
+        detail = f"{detail} webbrowser error: {browser_error}"
+    return False, detail
+
+
+def _launch_viewer(repo_name: str, port: int, open_browser: bool, output_base: Path) -> None:
     viewer_dir = SKILL_ROOT / "viewer"
 
     if not viewer_dir.exists():
-        warnings.append("Viewer directory missing; skipped viewer launch.")
-        return warnings
+        raise RuntimeError("Viewer directory missing; cannot launch UI.")
 
     ok, install_message = _run_npm_install(viewer_dir)
     if not ok:
-        warnings.append(f"Viewer dependency install failed: {install_message}")
-        return warnings
+        raise RuntimeError(f"Viewer dependency install failed: {install_message}")
     if install_message:
         print(install_message)
 
     ok, start_message = _start_viewer_server(viewer_dir, port, output_base)
     if not ok:
-        warnings.append(start_message)
-        return warnings
+        raise RuntimeError(start_message)
     print(start_message)
 
-    if open_browser:
-        viewer_url = f"http://localhost:{port}/?repo={quote(repo_name)}&tab=architecture_services"
-        webbrowser.open(viewer_url)
-        print(f"Viewer URL: {viewer_url}")
+    viewer_url = f"http://localhost:{port}/?repo={quote(repo_name)}&tab=architecture_services"
+    print(f"Viewer URL: {viewer_url}")
 
-    return warnings
+    if open_browser:
+        opened, open_message = _open_viewer_url(viewer_url)
+        if not opened:
+            raise RuntimeError(
+                "Viewer started but browser could not be opened automatically. "
+                f"Open this URL manually: {viewer_url}. Details: {open_message}"
+            )
+        print(open_message)
 
 
 def run_once(args: argparse.Namespace) -> tuple[Path, list[str], list[str]]:
@@ -521,11 +658,16 @@ def run_once(args: argparse.Namespace) -> tuple[Path, list[str], list[str]]:
     prepared.output_root.mkdir(parents=True, exist_ok=True)
 
     lang_hints = {hint.strip().lower() for hint in args.lang_hints.split(",") if hint.strip()}
+    source_is_github = _is_github_url(args.source)
+    source_reference = args.source.strip() if source_is_github else prepared.repo_path.as_posix()
+    source_kind = "github_url" if source_is_github else "local_path"
     config = XrayConfig(
         repo_path=prepared.repo_path,
         output_root=prepared.output_root,
         lang_hints=lang_hints,
         max_files=args.max_files,
+        source_reference=source_reference,
+        source_kind=source_kind,
     )
 
     started = time.time()
@@ -549,7 +691,9 @@ def run_once(args: argparse.Namespace) -> tuple[Path, list[str], list[str]]:
             warnings.append(f"Simulation pipeline failed: {error}")
 
     if args.viewer:
-        warnings.extend(_launch_viewer(prepared.repo_name, args.viewer_port, args.open_viewer, output_base))
+        _launch_viewer(prepared.repo_name, args.viewer_port, args.open_viewer, output_base)
+    elif args.open_viewer:
+        warnings.append("--open-viewer has no effect when --no-viewer is set.")
     if args.export_images:
         warnings.extend(export_images(prepared.output_root))
 

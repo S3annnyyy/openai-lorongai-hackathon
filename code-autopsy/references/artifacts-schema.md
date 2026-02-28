@@ -13,10 +13,23 @@ Required files:
 - `dashboard_state.json`
 - `case_file.md`
 - `architecture.mmd`
+- `architecture.puml`
 - `er.mmd`
+- `er.puml`
 - `er.dbml`
 - `call-graph.mmd`
+- `call-graph.puml`
 - `dependencies.mmd`
+- `dependencies.puml`
+- `sequence.mmd`
+- `sequence.puml`
+- `use-case.mmd`
+- `use-case.puml`
+- `data.json`
+- `data.yaml`
+- `json-data.puml`
+- `yaml-data.puml`
+- `handoff.md`
 - `onboarding.md`
 - `top-files.md`
 - `index.md`
@@ -34,6 +47,7 @@ Optional files:
 - `images/*.png` (when `--export-images` succeeds)
 - `terraform-architecture.drawio` (generated when Terraform `.tf` files are detected)
 - `artifacts/terraform.json` (Terraform node/edge model used for draw.io output)
+- `diagrams/*.puml` (duplicated PlantUML variants of architecture/ER/call/dependencies/sequence/use-case/json-data/yaml-data)
 
 ## dashboard_state.json
 
@@ -41,7 +55,32 @@ Optional files:
   "generated_at": "string",
   "summary": {},
   "graphs": {},
-  "diagrams": {},
+  "diagrams": {
+    "architecture": "string",
+    "architecture_services": "string",
+    "architecture_code": "string",
+    "architecture_iac": "string",
+    "er": "string",
+    "call_graph": "string",
+    "dependencies": "string",
+    "sequence": "string",
+    "use_case": "string",
+    "json_data": "string",
+    "yaml_data": "string"
+  },
+  "diagrams_plantuml": {
+    "architecture": "string",
+    "architecture_services": "string",
+    "architecture_code": "string",
+    "architecture_iac": "string",
+    "er": "string",
+    "call_graph": "string",
+    "dependencies": "string",
+    "sequence": "string",
+    "use_case": "string",
+    "json_data": "string",
+    "yaml_data": "string"
+  },
   "onboarding": {},
   "kiv": {
     "graph_3d": "Deferred to Phase 2"
@@ -52,7 +91,9 @@ Optional files:
 
 {
   "name": "string",
-  "root": "string",
+  "root": "string (stable local path or GitHub URL input)",
+  "analysis_workspace": "string (actual analyzed filesystem path)",
+  "source_kind": "local_path|github_url",
   "languages": ["string"],
   "frameworks": ["string"],
   "entrypoints": ["string"],

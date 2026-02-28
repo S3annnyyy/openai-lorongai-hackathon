@@ -69,6 +69,8 @@ export type DashboardState = {
   summary: {
     repo_name: string;
     repo_root: string;
+    analysis_workspace?: string;
+    source_kind?: string;
     languages: string[];
     frameworks: string[];
     entrypoints: string[];
@@ -132,7 +134,24 @@ export type DashboardState = {
     er: string;
     call_graph: string;
     dependencies: string;
+    sequence?: string;
+    use_case?: string;
+    json_data?: string;
+    yaml_data?: string;
     terraform_drawio?: string;
+  };
+  diagrams_plantuml?: {
+    architecture?: string;
+    architecture_services?: string;
+    architecture_code?: string;
+    architecture_iac?: string;
+    er?: string;
+    call_graph?: string;
+    dependencies?: string;
+    sequence?: string;
+    use_case?: string;
+    json_data?: string;
+    yaml_data?: string;
   };
   onboarding: {
     start_here: string[];
@@ -145,6 +164,7 @@ export type DashboardState = {
   };
   narrative?: {
     repo_summary_markdown?: string;
+    handoff_markdown?: string;
   };
   kiv: {
     graph_3d: string;

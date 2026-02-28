@@ -128,7 +128,9 @@ async function main() {
     ['architecture-iac', dashboard?.diagrams?.architecture_iac || 'flowchart LR\nA-->B\n', 'architecture-iac.png'],
     ['er', dashboard?.diagrams?.er || 'erDiagram\n', 'er.png'],
     ['call-graph', dashboard?.diagrams?.call_graph || 'flowchart LR\nA-->B\n', 'call-graph.png'],
-    ['dependency', dashboard?.diagrams?.dependencies || 'flowchart LR\nA-->B\n', 'dependency.png']
+    ['dependency', dashboard?.diagrams?.dependencies || 'flowchart LR\nA-->B\n', 'dependency.png'],
+    ['sequence', dashboard?.diagrams?.sequence || 'sequenceDiagram\nA->>B: request\nB-->>A: response\n', 'sequence.png'],
+    ['use-case', dashboard?.diagrams?.use_case || 'flowchart LR\nactor_client["User"] --> use_case(["Capability"])\n', 'use-case.png']
   ];
 
   for (const [title, diagram, filename] of map) {

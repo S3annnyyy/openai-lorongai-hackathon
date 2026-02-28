@@ -83,6 +83,14 @@ With default flags, CLI will:
 - start `npm run dev -- --port <viewer-port>` if that port is not already in use
 - set `AUTOPSY_OUTPUT_ROOT` for viewer API routes
 - open `http://localhost:<port>/?repo=<repo_name>&tab=architecture_services`
+- fail fast (non-zero exit) if viewer install/start/browser-open fails
+- launch viewer in a detached session so it remains available after CLI exit
+- resolve `npm`/`node` from PATH, then from the current login shell; optional overrides:
+  - `AUTOPSY_NPM_BIN=/absolute/path/to/npm`
+  - `AUTOPSY_NODE_BIN=/absolute/path/to/node`
+- data-diagram renderer uses PlantUML server (default `https://www.plantuml.com/plantuml`);
+  viewer proxies rendering through `/api/plantuml` (POST)
+  override server with `PLANTUML_SERVER_URL` (or `NEXT_PUBLIC_PLANTUML_SERVER_URL`)
 
 Defaults:
 - `--viewer` enabled
@@ -114,6 +122,7 @@ Per repo output root (`code-autopsy/.autopsy-outputs/<repo_name>/`):
 - `metrics.json`
 - `dashboard_state.json`
 - `index.md`
+- `handoff.md`
 - `onboarding.md`
 - `repo-summary.md`
 - `top-files.md`
@@ -122,19 +131,45 @@ Per repo output root (`code-autopsy/.autopsy-outputs/<repo_name>/`):
 - `architecture-code.mmd`
 - `architecture-iac.mmd`
 - `architecture.mmd` (legacy alias to services-level architecture)
+- `architecture-services.puml`
+- `architecture-code.puml`
+- `architecture-iac.puml`
+- `architecture.puml` (legacy alias to services-level architecture)
 - `er.mmd`
+- `er.puml`
 - `er.dbml`
 - `call-graph.mmd`
+- `call-graph.puml`
 - `dependencies.mmd`
+- `dependencies.puml`
+- `sequence.mmd`
+- `sequence.puml`
+- `use-case.mmd`
+- `use-case.puml`
+- `data.json`
+- `data.yaml`
+- `json-data.puml`
+- `yaml-data.puml`
 - `artifacts/*.json` (`entrypoints`, `routes`, `models`, `imports`, `calls`, `entities`, `iac`, `cycles`, `hotspots`, `glossary`)
-- `diagrams/*.mmd` (duplicated copies for architecture/ER/call/dependencies)
+- `diagrams/*.mmd` (duplicated copies for architecture/ER/call/dependencies/sequence/use-case)
+- `diagrams/*.puml` (duplicated PlantUML copies for architecture/ER/call/dependencies/sequence/use-case/json-data/yaml-data)
 - `images/*.png` (only when `--export-images` succeeds)
+
+`dashboard_state.json` now includes:
+- `diagrams` (Mermaid sources plus JSON/YAML data docs used by viewer)
+- `diagrams_plantuml` (parallel PlantUML sources for architecture/ER/call/dependencies/sequence/use-case/json-data/yaml-data)
+- `summary.repo_root` (stable source reference for local path or GitHub URL input)
+- `summary.analysis_workspace` (actual filesystem path analyzed for this run)
 
 ## Diagram levels
 
 - `Architecture (Services)`: high-level service/system view (default architecture view in viewer)
 - `Architecture (Code)`: code-layer relationships
 - `Architecture (IaC)`: infrastructure/IaC-layer view from Terraform/Kubernetes/Compose/CloudFormation/Bicep-like files
+- `Sequence`: request/handler/data interaction flows inferred from routes + calls
+- `Use Case`: endpoint-centric capability map
+- `JSON Data` and `YAML Data`: normalized analysis snapshot documents
+  - viewer renders these as PlantUML diagrams (with raw source fallback)
 
 ## Smoke test repos
 
@@ -161,6 +196,14 @@ AUTOPSY_OUTPUT_ROOT=/Users/kaelanwan/Documents/Projects/openai-lorongai-hackatho
 
 Open `http://localhost:3000/?repo=<repo_name>&tab=architecture_services`.
 
+## Render PlantUML diagrams (optional)
+
+If PlantUML is installed locally, render the generated `.puml` files to SVG/PNG:
+
+```bash
+java -jar plantuml.jar -tsvg /Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/code-autopsy/.autopsy-outputs/<repo_name>/diagrams/*.puml
+```
+
 ## Troubleshooting
 
 - `No autopsy output found`: verify artifacts exist at `code-autopsy/.autopsy-outputs/<repo>/`.
@@ -169,6 +212,7 @@ Open `http://localhost:3000/?repo=<repo_name>&tab=architecture_services`.
   - `cd code-autopsy/viewer && rm -rf .next && AUTOPSY_OUTPUT_ROOT=... npm run dev -- --port 3000`
   - or `AUTOPSY_OUTPUT_ROOT=... npm run dev:clean -- --port 3000`
 - `Error: watch mode is only supported for local repository paths.`: remove `--watch` when source is a GitHub URL.
+- `Viewer dependency install failed: npm not found`: install Node.js/npm and re-run.
 - `PNG export skipped`: install Playwright browser:
   - `cd code-autopsy/viewer && npx playwright install chromium`
 - Mermaid parse issues caused by escaped text (`flowchart LR\n...`): now handled in viewer; if it persists, regenerate artifacts with latest backend code.
