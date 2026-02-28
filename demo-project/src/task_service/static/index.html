@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Task Service</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <h1>Task Service</h1>
+      <form id="task-form" class="panel">
+        <label for="title">New task</label>
+        <input id="title" name="title" placeholder="Buy milk" required />
+        <label for="priority">Priority</label>
+        <select id="priority" name="priority">
+          <option value="low">low</option>
+          <option value="medium" selected>medium</option>
+          <option value="high">high</option>
+        </select>
+        <button type="submit">Add task</button>
+      </form>
+
+      <section class="toolbar panel">
+        <label for="status-filter">Show</label>
+        <select id="status-filter">
+          <option value="all" selected>All</option>
+          <option value="active">Active</option>
+          <option value="completed">Completed</option>
+        </select>
+        <button id="refresh">Refresh</button>
+      </section>
+
+      <section class="panel">
+        <h2>Tasks</h2>
+        <ul id="task-list"></ul>
+        <p id="empty" class="muted"></p>
+      </section>
+
+      <section class="panel">
+        <h2>Report</h2>
+        <pre id="report"></pre>
+      </section>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
+

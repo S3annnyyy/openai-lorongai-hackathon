@@ -1,0 +1,4 @@
+Add task due dates and sort task list by due date.
+Add a simple text search endpoint and frontend search box.
+Add input validation so duplicate task titles are rejected.
+
