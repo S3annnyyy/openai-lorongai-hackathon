@@ -2,7 +2,11 @@
 
 ## Mermaid (required)
 
-Produce `diagrams/architecture.mmd` using `flowchart LR`.
+Produce these files at output root:
+- `architecture.mmd` using `flowchart LR`
+- `er.mmd` using `erDiagram`
+- `call-graph.mmd` using `flowchart LR`
+- `dependencies.mmd` using `flowchart LR`
 
 Node style classes:
 - `critical`
@@ -14,7 +18,7 @@ Edge labels should include relation type (`calls`, `depends_on`, `trust_boundary
 
 ## draw.io (optional)
 
-If requested, output `diagrams/architecture.drawio` as mxGraph XML.
+If requested, output `architecture.drawio` as mxGraph XML.
 
 Minimum metadata per shape:
 - id
@@ -33,3 +37,8 @@ Export normalized graph payload:
 }
 
 Use this payload as input to platform-specific renderers.
+
+## Viewer Rendering
+
+- MVP viewer is 2D interactive graph + Mermaid tabs.
+- 3D force graph export/rendering is KIV (Phase 2).

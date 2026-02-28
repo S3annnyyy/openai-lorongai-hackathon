@@ -9,6 +9,13 @@ Execute a full-system forensic pass on a repository and return a diagnostic dash
 
 ## Quick Start
 
+Choose one input mode:
+- GitHub URL mode: user pastes `https://github.com/org/repo` and run `python scripts/code_autopsy.py <url>`.
+- Local workspace mode: run `python scripts/code_autopsy.py .` from the repository root in VS Code/Codex.
+
+Both modes write outputs to `code-autopsy/.autopsy-outputs/<repo_name>/`.
+GitHub URL mode does not require manual cloning; the CLI fetches source directly.
+
 1. Build baseline artifacts:
 - `repo.json`
 - `graph.json`
@@ -31,6 +38,30 @@ Execute a full-system forensic pass on a repository and return a diagnostic dash
 - `diagrams/architecture.mmd` (required)
 - `diagrams/architecture.drawio` (optional)
 - Eraser import payload (optional) per `references/diagram-exports.md`
+
+## Input and Output Contract
+
+Use `scripts/code_autopsy.py` as the default entrypoint for this skill.
+
+CLI contract:
+- positional source: GitHub URL or local repository path.
+- `--output`: output base path (default `code-autopsy/.autopsy-outputs`).
+- `--viewer/--no-viewer`: auto install/start viewer frontend after output (default: enabled).
+- `--open-viewer/--no-open-viewer`: auto-open browser dashboard URL (default: enabled).
+
+Examples:
+- `python scripts/code_autopsy.py https://github.com/org/repo`
+- `python scripts/code_autopsy.py .`
+
+Output root:
+- `code-autopsy/.autopsy-outputs/<repo_name>/repo.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/graph.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/metrics.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/decay_forecast.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/attack_surface.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/failure_simulation.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/dashboard_state.json`
+- `code-autopsy/.autopsy-outputs/<repo_name>/diagrams/architecture.mmd`
 
 ## Operating Model
 
@@ -149,5 +180,6 @@ Rank breakage likelihood and blast radius. Output causal chains, not only scores
 - `references/scoring-models.md`: risk, decay, and fragility formulas.
 - `references/diagram-exports.md`: Mermaid/draw.io/Eraser export expectations.
 - `references/agent-prompts.md`: scoped prompts for each agent.
+- `scripts/code_autopsy.py`: baseline orchestrator for GitHub URL or local path inputs.
 - `scripts/render_mermaid_from_graph.py`: graph to Mermaid conversion.
 - `scripts/score_decay.py`: baseline decay score calculator.

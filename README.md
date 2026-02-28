@@ -1,56 +1,24 @@
 # openai-lorongai-hackathon
 
-## Simulation agent: 3-month red/blue security simulation
+## Code-Autopsy X-Ray MVP
 
-Use `simulate_agent.py` with a context file for security-focused iterative runs:
-
-```bash
-python simulate_agent.py \
-  --source demo-project \
-  --workspace .simulations \
-  --run-name smoke-security-sprint \
-  --simulation-weeks 12 \
-  --weeks-per-iteration 2 \
-  --agent-context simulation_context.md \
-  --features-file demo-project/features.example.txt \
-  --max-iterations 6 \
-  --iteration-command "python -m pip install -e . --disable-pip-version-check --no-input && python -m unittest discover -s tests"
-``` 
-
-### Run directly against a GitHub repo
+Run X-Ray mode on a local repo:
 
 ```bash
-python simulate_agent.py \
-  --source-url https://github.com/openai-lorongai-hackathon/sample \
-  --source-ref main \
-  --workspace .simulations \
-  --run-name smoke-security-sprint \
-  --simulation-weeks 12 \
-  --weeks-per-iteration 2 \
-  --agent-context simulation_context.md \
-  --features-file features.example.txt \
-  --max-iterations 6 \
-  --iteration-command "python -m pip install -e . --disable-pip-version-check --no-input && python -m unittest discover -s tests"
+python3 code-autopsy/scripts/code_autopsy.py /path/to/repo --mode xray --output docs --viewer --export-images
 ```
 
-Use `org/repo` shorthand for GitHub URLs if you prefer:
+Default output:
 
-```bash
-python simulate_agent.py \
-  --source-url openai-lorongai-hackathon/sample \
-  --source-subdir demo-project \
-  --source-ref main
-```
+`/path/to/repo/docs/code-autopsy`
 
-If needed, you can install dependencies explicitly before running anything:
+Notes:
+- 2D interactive Next.js viewer is MVP (`code-autopsy/viewer`).
+- 3D graph mode is KIV / Phase 2.
+- Watch mode is best effort (`--watch`).
 
-```bash
-cd demo-project
-python -m pip install -r requirements.txt --disable-pip-version-check --no-input
-python -m unittest discover -s tests
-```
+## Implementation Guide
 
-Each iteration now emits:
-- standard checkpoint artifacts
-- `.simulation/agent-notes/<iter>-<slug>.{red-team,blue-team,refactorer,historian}.md`
-- `simulation_report.md` with per-agent markdown summaries and timeline.
+Full setup, commands, outputs, and test-repo walkthrough:
+
+- [`code-autopsy/IMPLEMENTATION_GUIDE.md`](/Users/kaelanwan/Documents/Projects/openai-lorongai-hackathon/code-autopsy/IMPLEMENTATION_GUIDE.md)

@@ -1,4 +1,4 @@
 interface:
   display_name: "CodeAutopsy"
-  short_description: "Forensic codebase risk dashboard"
-  default_prompt: "Use $code-autopsy to run a full repository autopsy and generate diagrams, risk maps, and a 2-year decay forecast."
+  short_description: "X-Ray onboarding visualizer"
+  default_prompt: "Use $code-autopsy to run X-Ray mode on a local repo and generate diagrams, onboarding docs, an interactive viewer, and PNG snapshots."
