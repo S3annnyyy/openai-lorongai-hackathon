@@ -1,6 +1,0 @@
-﻿# One feature per line. Lines starting with # are ignored.
-
-Add user authentication and session management
-Add role-based access control for admin actions
-Add activity timeline with export to CSV
-Add in-app notifications center
