@@ -83,10 +83,30 @@ function statusBadge(status: string): "[OK]" | "[FAIL]" | "[WARN]" {
   return "[WARN]";
 }
 
+function statusTone(status: string): "ok" | "failed" | "warn" {
+  if (status === "ok") return "ok";
+  if (status === "failed") return "failed";
+  return "warn";
+}
+
 function formatRiskPriority(score: number): string {
   if (score >= 50) return "High";
   if (score >= 20) return "Medium";
   return "Watch";
+}
+
+function formatRiskPriorityClass(score: number): "high" | "medium" | "watch" {
+  if (score >= 50) return "high";
+  if (score >= 20) return "medium";
+  return "watch";
+}
+
+function parseHotspotLine(value: string): { path: string; count: number } {
+  const match = value.match(/^(.*)\s+\((\d+)x\)$/);
+  if (!match) {
+    return { path: value, count: 0 };
+  }
+  return { path: match[1].trim(), count: Number(match[2]) || 0 };
 }
 
 function formatRiskLabel(label: string): string {
@@ -103,6 +123,55 @@ function safeDate(value: string | undefined): string {
   const parsed = Date.parse(value);
   if (Number.isNaN(parsed)) return "Invalid date";
   return new Date(parsed).toLocaleString();
+}
+
+type PostPointerTone = "priority" | "guardrail" | "handoff" | "action";
+
+function classifyPostPointer(pointer: string): { tone: PostPointerTone; label: string } {
+  const normalized = pointer.toLowerCase();
+  if (normalized.startsWith("priority now") || normalized.includes("main issues")) {
+    return { tone: "priority", label: "Priority" };
+  }
+  if (normalized.includes("defer ") || normalized.includes("before adding")) {
+    return { tone: "guardrail", label: "Guardrail" };
+  }
+  if (
+    normalized.includes("keep together") ||
+    normalized.includes("run_manifest") ||
+    normalized.includes("checkpoint")
+  ) {
+    return { tone: "handoff", label: "Handoff" };
+  }
+  return { tone: "action", label: "Action" };
+}
+
+function splitPostPointer(pointer: string): { title: string | null; body: string } {
+  const separatorIndex = pointer.indexOf(":");
+  if (separatorIndex > 0 && separatorIndex < 46) {
+    const title = pointer.slice(0, separatorIndex).trim();
+    const body = pointer.slice(separatorIndex + 1).trim();
+    if (title && body) {
+      return { title, body };
+    }
+  }
+  return { title: null, body: pointer.trim() };
+}
+
+function renderPointerText(value: string): JSX.Element {
+  const parts = value.split(/`([^`]+)`/g);
+  return (
+    <>
+      {parts.map((part, index) =>
+        index % 2 === 1 ? (
+          <code key={`code-${index}`} className="pointer-code-chip">
+            {part}
+          </code>
+        ) : (
+          <span key={`text-${index}`}>{part}</span>
+        )
+      )}
+    </>
+  );
 }
 
 function cleanMarkdownLine(line: string): string {
@@ -786,6 +855,21 @@ export default function Page() {
   const riskPriorityLines = riskPairs.slice(0, 3).map(([label, count]) => {
     return `${formatRiskLabel(label)}: ${count} signal${count === 1 ? "" : "s"} (${formatRiskPriority(count)})`;
   });
+  const topRiskRows = riskPairs.slice(0, 3).map(([label, count]) => ({
+    label: formatRiskLabel(label),
+    count,
+    priority: formatRiskPriority(count),
+    tone: formatRiskPriorityClass(count),
+  }));
+  const insightStats = simulationSummary
+    ? [
+        { label: "Planned Features", value: String(simulationSummary.requested_count) },
+        { label: "Completed", value: String(simulationSummary.features_completed) },
+        { label: "Success Rate", value: `${simulationSummary.iteration_success_rate.toFixed(0)}%` },
+        { label: "Last Stable Checkpoint", value: simulationSummary.last_stable_checkpoint || "N/A" },
+      ]
+    : [];
+  const hotspotItems = (simulationSummary?.hotspot_lines || []).map(parseHotspotLine);
   const postPointers = simulationSummary?.post_work_pointers || [];
   const selectedDiagramTab = isDiagramTab(selectedTab) ? selectedTab : "architecture_services";
   const activeCheckpoint = checkpoints.find((item) => item.tag === selectedIterationTag) || checkpoints[0] || null;
@@ -1150,18 +1234,29 @@ export default function Page() {
                 {simulationSummary ? (
                   <div className="simulation-section">
                     <h4>Key repo insights for the next feature</h4>
-                    <ul className="side-list compact-list">
-                      <li>Planned features: {simulationSummary.requested_count}</li>
-                      <li>Features completed in this run: {simulationSummary.features_completed}</li>
-                      <li>Iteration success rate: {simulationSummary.iteration_success_rate.toFixed(0)}%</li>
-                      <li>Last stable checkpoint: {simulationSummary.last_stable_checkpoint || "N/A"}</li>
-                      <li>
-                        Files touched most:
-                        {simulationSummary.hotspot_lines.length > 0
-                          ? ` ${simulationSummary.hotspot_lines.join(", ")}`
-                          : " no repeat hotspots"}
-                      </li>
-                    </ul>
+                    <div className="insights-stat-grid">
+                      {insightStats.map((item) => (
+                        <div key={item.label} className="insight-stat-card">
+                          <span className="insight-stat-label">{item.label}</span>
+                          <span className="insight-stat-value">{item.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="insights-hotspot-wrap">
+                      <span className="insight-subtitle">Files touched most</span>
+                      {hotspotItems.length > 0 ? (
+                        <div className="hotspot-chip-list">
+                          {hotspotItems.map((item) => (
+                            <div key={`${item.path}-${item.count}`} className="hotspot-chip">
+                              <code className="hotspot-path">{item.path}</code>
+                              {item.count > 0 ? <span className="hotspot-count">{item.count}x</span> : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted">No repeat hotspots found.</p>
+                      )}
+                    </div>
 
                     <h4>Priority now</h4>
                     {riskPriorityLines.length > 0 ? (
@@ -1170,11 +1265,17 @@ export default function Page() {
                           Main issues the simulation repeated:{" "}
                           {riskPriorityLines.join(", ")}
                         </p>
-                        <ul className="side-list compact-list">
-                          {riskPriorityLines.map((item) => (
-                            <li key={item}>{item}</li>
+                        <div className="risk-card-list">
+                          {topRiskRows.map((risk) => (
+                            <div key={risk.label} className={`risk-card risk-${risk.tone}`}>
+                              <div className="risk-card-top">
+                                <strong>{risk.label}</strong>
+                                <span className={`risk-priority-pill risk-${risk.tone}`}>{risk.priority}</span>
+                              </div>
+                              <div className="risk-card-bottom">{risk.count} signals</div>
+                            </div>
                           ))}
-                        </ul>
+                        </div>
                       </>
                     ) : (
                       <p>No repeated risk themes were detected.</p>
@@ -1204,21 +1305,30 @@ export default function Page() {
                         <h5 className="simulation-checkpoint-title">
                           {activeCheckpoint.tag} (Iteration {activeCheckpoint.iteration.toString().padStart(3, "0")})
                         </h5>
-                        <p>
-                          <strong>Goal:</strong> {activeCheckpoint.feature}
-                        </p>
-                        <p>
-                          <strong>Status:</strong> {statusBadge(activeCheckpoint.status)} {activeCheckpoint.status}
-                        </p>
-                        <p>
-                          <strong>Timestamp:</strong> {safeDate(activeCheckpoint.timestamp_utc)}
-                        </p>
-                        <p>
-                          <strong>Notes:</strong> {activeCheckpoint.notes || "No notes recorded."}
-                        </p>
-                        <p>
-                          <strong>Changed files:</strong> {activeCheckpoint.changed_files}
-                        </p>
+                        <div className="checkpoint-goal-card">
+                          <span className="checkpoint-goal-label">Goal</span>
+                          <p className="checkpoint-goal-text">{activeCheckpoint.feature}</p>
+                        </div>
+                        <div className="checkpoint-meta-grid">
+                          <div className="checkpoint-meta-card">
+                            <span className="checkpoint-meta-label">Status</span>
+                            <span className={`checkpoint-status-pill ${statusTone(activeCheckpoint.status)}`}>
+                              {statusBadge(activeCheckpoint.status)} {activeCheckpoint.status}
+                            </span>
+                          </div>
+                          <div className="checkpoint-meta-card">
+                            <span className="checkpoint-meta-label">Timestamp</span>
+                            <span className="checkpoint-meta-value">{safeDate(activeCheckpoint.timestamp_utc)}</span>
+                          </div>
+                          <div className="checkpoint-meta-card">
+                            <span className="checkpoint-meta-label">Changed files</span>
+                            <span className="checkpoint-meta-value">{activeCheckpoint.changed_files}</span>
+                          </div>
+                        </div>
+                        <div className="checkpoint-notes-card">
+                          <span className="checkpoint-meta-label">Notes</span>
+                          <p className="checkpoint-notes-text">{activeCheckpoint.notes || "No notes recorded."}</p>
+                        </div>
                         <div className="simulation-agent-reports">
                           <div>
                             <strong>Red Team</strong>
@@ -1336,11 +1446,36 @@ export default function Page() {
                 {postPointers.length > 0 ? (
                   <div className="simulation-section">
                     <h4>What to do next</h4>
-                    <ul className="side-list compact-list">
-                      {postPointers.map((pointer) => (
-                        <li key={pointer}>{pointer}</li>
-                      ))}
-                    </ul>
+                    <div className="next-steps-grid">
+                      {postPointers.map((pointer, index) => {
+                        const meta = classifyPostPointer(pointer);
+                        const content = splitPostPointer(pointer);
+                        return (
+                          <article
+                            key={`${index}-${pointer}`}
+                            className={`next-step-card ${meta.tone}`}
+                          >
+                            <div className="next-step-header">
+                              <span className="next-step-count">
+                                {String(index + 1).padStart(2, "0")}
+                              </span>
+                              <span className={`next-step-tag ${meta.tone}`}>{meta.label}</span>
+                            </div>
+                            {content.title ? (
+                              <p className="next-step-title">{content.title}</p>
+                            ) : null}
+                            <p className="next-step-text">{renderPointerText(content.body)}</p>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {data.narrative?.repo_summary_markdown ? (
+                  <div className="simulation-section">
+                    <h4>Repo summary *for agent reference*</h4>
+                    <pre className="summary-block">{data.narrative.repo_summary_markdown}</pre>
                   </div>
                 ) : null}
 
@@ -1431,12 +1566,6 @@ export default function Page() {
             </ul>
           </div>
 
-          {data.narrative?.repo_summary_markdown ? (
-            <div className="panel">
-              <h3>Repo Summary</h3>
-              <pre className="summary-block">{data.narrative.repo_summary_markdown}</pre>
-            </div>
-          ) : null}
         </div>
       </section>
     </main>

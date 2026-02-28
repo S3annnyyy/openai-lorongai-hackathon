@@ -669,12 +669,172 @@ main {
   margin: 8px 0 10px;
 }
 
+.insights-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.insight-stat-card {
+  border: 1px solid #cfe1ff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.08);
+}
+
+.insight-stat-label {
+  display: block;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 5px;
+}
+
+.insight-stat-value {
+  display: block;
+  font-size: 1.12rem;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.insights-hotspot-wrap {
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.insight-subtitle {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #475569;
+}
+
+.hotspot-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hotspot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #0f172a;
+  padding: 4px 10px;
+}
+
+.hotspot-path {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: 0.8rem;
+}
+
+.hotspot-count {
+  flex-shrink: 0;
+  border: 1px solid #93c5fd;
+  background: #ffffff;
+  color: #1d4ed8;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.risk-card-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.risk-card {
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.risk-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.risk-card-bottom {
+  font-size: 0.84rem;
+  color: #475569;
+}
+
+.risk-priority-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.risk-card.risk-high {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.risk-card.risk-medium {
+  border-color: #fed7aa;
+  background: #fffaf2;
+}
+
+.risk-card.risk-watch {
+  border-color: #fde68a;
+  background: #fffdf3;
+}
+
+.risk-priority-pill.risk-high {
+  color: #b91c1c;
+  border-color: #fca5a5;
+  background: #fee2e2;
+}
+
+.risk-priority-pill.risk-medium {
+  color: #9a3412;
+  border-color: #fdba74;
+  background: #ffedd5;
+}
+
+.risk-priority-pill.risk-watch {
+  color: #854d0e;
+  border-color: #facc15;
+  background: #fef9c3;
+}
+
 .simulation-checkpoint-title {
-  font-size: 1.45rem;
+  font-size: 1.75rem;
   line-height: 1.25;
   font-weight: 700;
-  margin-top: 6px;
-  margin-bottom: 10px;
+  margin-top: 10px;
+  margin-bottom: 14px;
+  letter-spacing: 0.01em;
 }
 
 .simulation-checkpoint-line {
@@ -683,6 +843,244 @@ main {
 
 .simulation-checkpoint-detail {
   margin: 10px 0;
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  padding: 12px 14px;
+}
+
+.checkpoint-goal-card {
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #eff6ff;
+  padding: 10px 12px;
+}
+
+.checkpoint-goal-label {
+  display: block;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #1d4ed8;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.checkpoint-goal-text {
+  margin: 0;
+  font-size: 1.18rem;
+  line-height: 1.4;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.checkpoint-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.checkpoint-meta-card {
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.checkpoint-meta-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.checkpoint-meta-value {
+  display: block;
+  font-size: 0.97rem;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.checkpoint-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.checkpoint-status-pill.ok {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.checkpoint-status-pill.failed {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.checkpoint-status-pill.warn {
+  color: #9a3412;
+  background: #ffedd5;
+  border-color: #fdba74;
+}
+
+.checkpoint-notes-card {
+  margin-top: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.checkpoint-notes-text {
+  margin: 0;
+  font-size: 0.96rem;
+  line-height: 1.48;
+  color: #0f172a;
+}
+
+.next-steps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+  align-items: stretch;
+  grid-auto-rows: 240px;
+}
+
+.next-step-card {
+  border: 1px solid #dbeafe;
+  border-left-width: 4px;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 10px 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.next-step-card.priority {
+  border-left-color: #dc2626;
+  background: linear-gradient(180deg, #ffffff, #fff7f7);
+}
+
+.next-step-card.guardrail {
+  border-left-color: #ea580c;
+  background: linear-gradient(180deg, #ffffff, #fffaf5);
+}
+
+.next-step-card.handoff {
+  border-left-color: #1d4ed8;
+  background: linear-gradient(180deg, #ffffff, #f8faff);
+}
+
+.next-step-card.action {
+  border-left-color: #0f766e;
+  background: linear-gradient(180deg, #ffffff, #f5fffb);
+}
+
+.next-step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.next-step-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+}
+
+.next-step-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+}
+
+.next-step-tag.priority {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.next-step-tag.guardrail {
+  color: #9a3412;
+  background: #ffedd5;
+  border-color: #fdba74;
+}
+
+.next-step-tag.handoff {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.next-step-tag.action {
+  color: #0f766e;
+  background: #ccfbf1;
+  border-color: #99f6e4;
+}
+
+.next-step-title {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #1e293b;
+}
+
+.next-step-text {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.52;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.pointer-code-chip {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0 2px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e293b;
+  padding: 1px 6px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .simulation-agent-reports {
@@ -945,6 +1343,14 @@ main {
 
   .simulation-download-btn {
     width: 100%;
+  }
+
+  .insights-stat-grid,
+  .risk-card-list,
+  .checkpoint-meta-grid,
+  .next-steps-grid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: auto;
   }
 
   .mermaid-shell-modal {
